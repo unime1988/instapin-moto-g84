@@ -15,7 +15,7 @@ private val Context.dataStore by preferencesDataStore(name = "instapin_settings"
 data class UserSettings(
     val geminiApiKey: String = "",
     val geminiModel: String = "gemini-2.5-flash",
-    val autoShowBubbleOnInstagramOnly: Boolean = true,
+    val autoShowBubbleOnInstagramOnly: Boolean = false,
     val autoCopyLinkWithAccessibility: Boolean = true,
     val autoAnalyzePhase2OnSave: Boolean = false,
     val creatorNicheDescription: String = "Educational content creator in Video Editing, Trading, Health, and Career growth",
@@ -40,7 +40,7 @@ class AppPreferences(private val context: Context) {
         UserSettings(
             geminiApiKey = prefs[KEY_GEMINI_API] ?: "",
             geminiModel = prefs[KEY_GEMINI_MODEL] ?: "gemini-2.5-flash",
-            autoShowBubbleOnInstagramOnly = prefs[KEY_AUTO_SHOW_IG_ONLY] ?: true,
+            autoShowBubbleOnInstagramOnly = prefs[KEY_AUTO_SHOW_IG_ONLY] ?: false,
             autoCopyLinkWithAccessibility = prefs[KEY_AUTO_COPY_LINK] ?: true,
             autoAnalyzePhase2OnSave = prefs[KEY_AUTO_ANALYZE_PHASE2] ?: false,
             creatorNicheDescription = prefs[KEY_CREATOR_NICHE]

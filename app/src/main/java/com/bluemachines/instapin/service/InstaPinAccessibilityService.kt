@@ -1,6 +1,7 @@
 package com.bluemachines.instapin.service
 
 import android.accessibilityservice.AccessibilityService
+import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,8 +19,8 @@ data class LiveInstagramScreenContext(
 
 /**
  * Phase 1 Accessibility Service for Moto G84 5G:
- * 1. Detects when Instagram (`com.instagram.android`) is in the foreground so the floating Pinterest
- *    bubble only hovers when needed.
+ * 1. Detects when Instagram (`com.instagram.android`) is in the foreground and AUTOMATICALLY
+ *    starts `FloatingOverlayService` if it isn't already running!
  * 2. Reads visible text nodes from the active Instagram Reel screen to extract `@author_handle`,
  *    the visible caption, and audio track without modifying anything in Instagram.
  * 3. Can optionally click Instagram's "Share -> Copy link" button if the user triggers a 1-tap
@@ -49,19 +50,29 @@ class InstaPinAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         _isServiceConnected.value = true
+        if (Settings.canDrawOverlays(this) && !FloatingOverlayService.isRunning) {
+            FloatingOverlayService.start(this)
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val pkg = event?.packageName?.toString() ?: return
 
-        // Ignore our own overlay window events so the bubble doesn't flicker when touched
-        if (pkg == INSTAPIN_PACKAGE || pkg == "com.android.systemui") {
+        // Ignore transient system UI, keyboard, and our own overlay events so Instagram state stays active
+        if (pkg == INSTAPIN_PACKAGE ||
+            pkg == "com.android.systemui" ||
+            pkg.contains("inputmethod") ||
+            pkg.contains("gboard") ||
+            pkg == "android"
+        ) {
             return
         }
 
-        val isIg = pkg == INSTAGRAM_PACKAGE
+        val isIg = pkg == INSTAGRAM_PACKAGE || pkg.startsWith("com.instagram.")
         if (!isIg) {
-            if (_screenContext.value.isInstagramForeground) {
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+                _screenContext.value.isInstagramForeground
+            ) {
                 _screenContext.value = _screenContext.value.copy(
                     isInstagramForeground = false,
                     updatedAtMillis = System.currentTimeMillis()
@@ -70,7 +81,20 @@ class InstaPinAccessibilityService : AccessibilityService() {
             return
         }
 
-        val rootNode = rootInActiveWindow ?: return
+        // Automatically start the Floating Hover Bubble whenever the user opens Instagram!
+        if (!FloatingOverlayService.isRunning && Settings.canDrawOverlays(this)) {
+            FloatingOverlayService.start(this)
+        }
+
+        val rootNode = rootInActiveWindow
+        if (rootNode == null) {
+            _screenContext.value = _screenContext.value.copy(
+                isInstagramForeground = true,
+                updatedAtMillis = System.currentTimeMillis()
+            )
+            return
+        }
+
         val parsed = parseInstagramNodeTree(rootNode)
         _screenContext.value = LiveInstagramScreenContext(
             isInstagramForeground = true,
@@ -115,7 +139,6 @@ class InstaPinAccessibilityService : AccessibilityService() {
 
             if (desc.isNotBlank()) {
                 contentDescs.add(desc)
-                // Instagram often puts "Reel by @username" or "Profile picture of username" in contentDescription
                 val reelByMatch = Regex("""(?:Reel by|Profile picture of|Photo by)\s+@?([A-Za-z0-9._]{2,30})""", RegexOption.IGNORE_CASE)
                     .find(desc)
                 if (reelByMatch != null && handleCandidate.isBlank()) {
@@ -131,14 +154,12 @@ class InstaPinAccessibilityService : AccessibilityService() {
         runCatching { walk(root, 0) }
 
         if (handleCandidate.isBlank()) {
-            // Find first short username-like token on screen
             handleCandidate = collectedTexts.firstOrNull { isLikelyUsername(it) }
                 ?.removePrefix("@")
                 .orEmpty()
         }
 
         if (captionCandidate.isBlank()) {
-            // Find longest descriptive text on screen that isn't a UI button label
             captionCandidate = collectedTexts
                 .filter { it.length >= 18 && !it.equals("Original audio", ignoreCase = true) }
                 .maxByOrNull { it.length }
@@ -171,10 +192,6 @@ class InstaPinAccessibilityService : AccessibilityService() {
         return cleaned.matches(Regex("""^[a-zA-Z0-9._]+$""")) && cleaned.any { it.isLetter() }
     }
 
-    /**
-     * Optional helper: if the user is on an Instagram Reel and hasn't copied the link yet,
-     * looks for a visible "Copy link" button (if the Share sheet is open) and clicks it.
-     */
     private fun attemptAutoCopyLinkGesture(): Boolean {
         val root = rootInActiveWindow ?: return false
         val copyNodes = root.findAccessibilityNodeInfosByText("Copy link")

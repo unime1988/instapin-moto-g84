@@ -1,6 +1,7 @@
 package com.bluemachines.instapin
 
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -35,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.bluemachines.instapin.service.FloatingOverlayService
 import com.bluemachines.instapin.ui.MainViewModel
 import com.bluemachines.instapin.ui.detail.PinDetailAndRepurposeScreen
 import com.bluemachines.instapin.ui.home.BoardsGridScreen
@@ -61,6 +63,10 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        if (Settings.canDrawOverlays(this) && !FloatingOverlayService.isRunning) {
+            FloatingOverlayService.start(this)
+        }
 
         setContent {
             MaterialTheme(colorScheme = InstaPinDarkColors) {
@@ -247,6 +253,13 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (Settings.canDrawOverlays(this) && !FloatingOverlayService.isRunning) {
+            FloatingOverlayService.start(this)
         }
     }
 }

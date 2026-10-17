@@ -40,6 +40,9 @@ import com.bluemachines.instapin.data.remote.InstagramMetadataExtractor
 import com.bluemachines.instapin.ui.overlay.PinterestRadialOverlay
 import com.bluemachines.instapin.ui.overlay.QuickSaveOverlaySheet
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -59,12 +62,15 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
     private var layoutParams: WindowManager.LayoutParams? = null
 
     private var isQuickSheetExpanded by mutableStateOf(false)
-    private var isInteractiveExpandedMode by mutableStateOf(false)
+    private var isFullScreenWindowMode by mutableStateOf(false)
 
     companion object {
         private const val CHANNEL_ID = "instapin_overlay_channel"
         private const val NOTIFICATION_ID = 1001
         const val ACTION_STOP_OVERLAY = "com.bluemachines.instapin.STOP_OVERLAY"
+
+        private val _isRunningFlow = MutableStateFlow(false)
+        val isRunningFlow: StateFlow<Boolean> = _isRunningFlow.asStateFlow()
 
         @Volatile
         var isRunning: Boolean = false
@@ -73,10 +79,12 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
         fun start(context: Context) {
             if (!Settings.canDrawOverlays(context)) return
             val intent = Intent(context, FloatingOverlayService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
             }
         }
 
@@ -89,9 +97,15 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
         super.onCreate()
         savedStateRegistryController.performRestore(null)
         isRunning = true
+        _isRunningFlow.value = true
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         startForeground(NOTIFICATION_ID, buildForegroundNotification())
         attachOverlayWindow()
+        Toast.makeText(
+            this,
+            "InstaPin Hover Bubble Active! Look at the right edge of your screen.",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -100,6 +114,9 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
             stopSelf()
             return START_NOT_STICKY
         }
+        if (composeOverlayView == null) {
+            attachOverlayWindow()
+        }
         return START_STICKY
     }
 
@@ -107,7 +124,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
         if (!Settings.canDrawOverlays(this) || composeOverlayView != null) return
 
         val app = applicationContext as InstaPinApp
-        val params = createWindowLayoutParams(fullScreenInteractive = false)
+        val params = createWindowLayoutParams(fullScreen = false, focusable = false)
         layoutParams = params
 
         val view = ComposeView(this).apply {
@@ -123,8 +140,6 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                 val screenContext by InstaPinAccessibilityService.screenContext.collectAsState()
                 val accessibilityConnected by InstaPinAccessibilityService.isServiceConnected.collectAsState()
 
-                // Show bubble always if user disabled "Instagram only", or if Accessibility isn't turned on yet,
-                // or whenever Instagram is in the foreground.
                 val shouldShowBubble = !settings.autoShowBubbleOnInstagramOnly ||
                     !accessibilityConnected ||
                     screenContext.isInstagramForeground ||
@@ -141,11 +156,11 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                             moods = moods,
                             onDismiss = {
                                 isQuickSheetExpanded = false
-                                setWindowInteractiveMode(false)
+                                updateWindowMode(fullScreen = false, focusable = false)
                             },
                             onSavePin = { manualUrl, author, caption, boardIds, moodIds, notes, runPhase2 ->
                                 isQuickSheetExpanded = false
-                                setWindowInteractiveMode(false)
+                                updateWindowMode(fullScreen = false, focusable = false)
                                 saveFromOverlay(
                                     explicitUrl = manualUrl.ifBlank { clipboardUrl },
                                     author = author,
@@ -163,10 +178,14 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                         PinterestRadialOverlay(
                             radialBoards = radialBoards.ifEmpty { boards.take(5) },
                             isRightSide = settings.bubbleSideRight,
+                            onRadialExpandChange = { expanded ->
+                                vibrateTick()
+                                updateWindowMode(fullScreen = expanded, focusable = false)
+                            },
                             onSingleTapOpenSheet = {
                                 vibrateTick()
                                 isQuickSheetExpanded = true
-                                setWindowInteractiveMode(true)
+                                updateWindowMode(fullScreen = true, focusable = true)
                             },
                             onRadialBoardSelected = { selectedBoard: Board? ->
                                 vibrateTick()
@@ -196,7 +215,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
         }
     }
 
-    private fun createWindowLayoutParams(fullScreenInteractive: Boolean): WindowManager.LayoutParams {
+    private fun createWindowLayoutParams(fullScreen: Boolean, focusable: Boolean): WindowManager.LayoutParams {
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
@@ -204,20 +223,21 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
-        val flags = if (fullScreenInteractive) {
+        val flags = if (focusable) {
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
         } else {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
         }
 
-        val width = if (fullScreenInteractive) {
+        val width = if (fullScreen) {
             WindowManager.LayoutParams.MATCH_PARENT
         } else {
             WindowManager.LayoutParams.WRAP_CONTENT
         }
 
-        val height = if (fullScreenInteractive) {
+        val height = if (fullScreen) {
             WindowManager.LayoutParams.MATCH_PARENT
         } else {
             WindowManager.LayoutParams.WRAP_CONTENT
@@ -234,11 +254,10 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
         }
     }
 
-    private fun setWindowInteractiveMode(fullScreenInteractive: Boolean) {
+    private fun updateWindowMode(fullScreen: Boolean, focusable: Boolean) {
         val view = composeOverlayView ?: return
-        if (isInteractiveExpandedMode == fullScreenInteractive) return
-        isInteractiveExpandedMode = fullScreenInteractive
-        val updatedParams = createWindowLayoutParams(fullScreenInteractive)
+        isFullScreenWindowMode = fullScreen
+        val updatedParams = createWindowLayoutParams(fullScreen = fullScreen, focusable = focusable)
         layoutParams = updatedParams
         runCatching {
             windowManager.updateViewLayout(view, updatedParams)
@@ -258,7 +277,6 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
     ) {
         val app = applicationContext as InstaPinApp
         lifecycleScope.launch {
-            // If Accessibility auto-copy is enabled and no URL is on clipboard yet, attempt quick Copy Link click
             var resolvedUrl = explicitUrl
             if (resolvedUrl.isNullOrBlank()) {
                 InstaPinAccessibilityService.triggerAutoCopyLinkIfPossible()
@@ -346,6 +364,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
 
     override fun onDestroy() {
         isRunning = false
+        _isRunningFlow.value = false
         composeOverlayView?.let { view ->
             runCatching { windowManager.removeView(view) }
         }

@@ -40,7 +40,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -70,7 +69,6 @@ import androidx.compose.ui.unit.sp
 import com.bluemachines.instapin.data.local.entity.Board
 import com.bluemachines.instapin.data.local.entity.MoodTag
 import kotlin.math.PI
-import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.roundToInt
@@ -99,6 +97,7 @@ fun parseHexColor(hex: String, fallback: Color = Color(0xFFE60023)): Color {
 fun PinterestRadialOverlay(
     radialBoards: List<Board>,
     isRightSide: Boolean = true,
+    onRadialExpandChange: (Boolean) -> Unit = {},
     onSingleTapOpenSheet: () -> Unit,
     onRadialBoardSelected: (Board?) -> Unit // null = AI Auto-Categorize
 ) {
@@ -107,7 +106,7 @@ fun PinterestRadialOverlay(
     var hoveredIndex by remember { mutableIntStateOf(-1) }
 
     val density = LocalDensity.current
-    val radiusPx = with(density) { 122.dp.toPx() }
+    val radiusPx = with(density) { 126.dp.toPx() }
 
     // Build radial targets: up to 5 pinned boards + 1 "AI Smart Sort" node
     val targets = remember(radialBoards, isRightSide) {
@@ -135,8 +134,14 @@ fun PinterestRadialOverlay(
         }
     }
 
+    val containerModifier = if (isRadialExpanded) {
+        Modifier.fillMaxSize()
+    } else {
+        Modifier.size(width = 76.dp, height = 76.dp)
+    }
+
     Box(
-        modifier = Modifier.fillMaxSize(),
+        modifier = containerModifier,
         contentAlignment = if (isRightSide) Alignment.CenterEnd else Alignment.CenterStart
     ) {
         // Dim backdrop while holding the radial menu
@@ -192,7 +197,7 @@ fun PinterestRadialOverlay(
 
         // Anchor container on the screen edge
         Box(
-            modifier = Modifier.padding(horizontal = 12.dp),
+            modifier = Modifier.padding(horizontal = 8.dp),
             contentAlignment = Alignment.Center
         ) {
             // Radial Target Nodes
@@ -254,7 +259,7 @@ fun PinterestRadialOverlay(
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .size(56.dp)
+                    .size(58.dp)
                     .shadow(12.dp, CircleShape)
                     .clip(CircleShape)
                     .background(
@@ -262,7 +267,7 @@ fun PinterestRadialOverlay(
                             colors = listOf(Color(0xFFE60023), Color(0xFFFF4B2B))
                         )
                     )
-                    .border(2.dp, Color.White.copy(alpha = 0.9f), CircleShape)
+                    .border(2.5.dp, Color.White.copy(alpha = 0.95f), CircleShape)
                     .pointerInput(targets) {
                         detectTapGestures(
                             onTap = {
@@ -274,6 +279,7 @@ fun PinterestRadialOverlay(
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
                                 isRadialExpanded = true
+                                onRadialExpandChange(true)
                                 dragOffset = Offset.Zero
                                 hoveredIndex = -1
                             },
@@ -282,7 +288,6 @@ fun PinterestRadialOverlay(
                                 dragOffset += dragAmount
                                 val distance = hypot(dragOffset.x, dragOffset.y)
                                 if (distance > 36f) {
-                                    // Find radial target with closest angle/position
                                     hoveredIndex = targets.indices.minByOrNull { idx ->
                                         val item = targets[idx]
                                         val targetX = (cos(item.angleRadians) * radiusPx).toFloat()
@@ -296,6 +301,7 @@ fun PinterestRadialOverlay(
                             onDragEnd = {
                                 val selectedIdx = hoveredIndex
                                 isRadialExpanded = false
+                                onRadialExpandChange(false)
                                 dragOffset = Offset.Zero
                                 hoveredIndex = -1
                                 if (selectedIdx in targets.indices) {
@@ -304,6 +310,7 @@ fun PinterestRadialOverlay(
                             },
                             onDragCancel = {
                                 isRadialExpanded = false
+                                onRadialExpandChange(false)
                                 dragOffset = Offset.Zero
                                 hoveredIndex = -1
                             }
@@ -314,7 +321,7 @@ fun PinterestRadialOverlay(
                     imageVector = Icons.Default.PushPin,
                     contentDescription = "InstaPin Hover Button",
                     tint = Color.White,
-                    modifier = Modifier.size(26.dp)
+                    modifier = Modifier.size(28.dp)
                 )
             }
         }
