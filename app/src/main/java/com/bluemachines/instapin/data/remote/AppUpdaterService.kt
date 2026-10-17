@@ -19,26 +19,71 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 
+data class ReleaseVersionEntry(
+    val versionTag: String,
+    val title: String,
+    val changelogNotes: String,
+    val publishedAt: String
+)
+
 data class GitHubReleaseInfo(
     val tagName: String,
     val releaseName: String,
+    val changelogBody: String,
     val publishedAt: String,
     val apkDownloadUrl: String,
-    val isNewerThanCurrent: Boolean
+    val isNewerThanCurrent: Boolean,
+    val recentReleasesHistory: List<ReleaseVersionEntry> = emptyList()
 )
 
 /**
- * 1-Tap Over-The-Air Updater for Moto G84 5G:
- * Checks `https://api.github.com/repos/unime1988/instapin-moto-g84/releases/latest`,
- * downloads `InstaPin-MotoG84.apk`, and launches the native Android Package Installer
- * so updates happen in-place without losing any saved Room database boards or pins.
+ * 1-Tap Over-The-Air Updater & Changelog Inspector for Moto G84 5G:
+ * Checks `https://api.github.com/repos/unime1988/instapin-moto-g84/releases`,
+ * compares the Previous Version, Current Installed Version, and Latest GitHub Version,
+ * displays full human-readable Changelogs, and downloads & installs `InstaPin-MotoG84.apk` in 1 tap.
  */
 object AppUpdaterService {
 
     private const val REPO_OWNER = "unime1988"
     private const val REPO_NAME = "instapin-moto-g84"
-    private const val LATEST_RELEASE_API = "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest"
+    private const val RELEASES_LIST_API = "https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases?per_page=8"
     private const val DIRECT_LATEST_APK_URL = "https://github.com/$REPO_OWNER/$REPO_NAME/releases/latest/download/InstaPin-MotoG84.apk"
+
+    /**
+     * Built-in release history so the user always sees what changed across every version even offline.
+     */
+    val builtInChangelogHistory: List<ReleaseVersionEntry> = listOf(
+        ReleaseVersionEntry(
+            versionTag = "v1.0.7",
+            title = "Version History Tracker & Live GitHub Changelog Viewer",
+            changelogNotes = "• Shows Previous Installed Version, Current Active Version, and Newest GitHub Update side-by-side.\n" +
+                "• Displays full what's-new changelog notes before and after every update.\n" +
+                "• Auto-checks GitHub Releases when opening Moto G84 Setup.",
+            publishedAt = "Latest"
+        ),
+        ReleaseVersionEntry(
+            versionTag = "v1.0.6",
+            title = "1-Tap Instant Board Save & Safe Escape Bar",
+            changelogNotes = "• Tapping any Board chip in the overlay now immediately saves the Reel & minimizes in 0.1s!\n" +
+                "• Added sticky top Escape Bar with [Minimize], [Hide Pin], and [✕ Close] buttons so the screen is never trapped.\n" +
+                "• Added a small [✕] button on the corner of the floating red pin itself.",
+            publishedAt = "Previous"
+        ),
+        ReleaseVersionEntry(
+            versionTag = "v1.0.5",
+            title = "Auto-Hover on Instagram & Explicit Bubble Sizing",
+            changelogNotes = "• Automatically launches the floating red pin when Instagram opens.\n" +
+                "• Fixed overlay window bounds (76x88dp collapsed) so Instagram scrolls freely.",
+            publishedAt = "Earlier"
+        ),
+        ReleaseVersionEntry(
+            versionTag = "v1.0.3",
+            title = "1-Tap In-App GitHub Updater & Permanent Signing Key",
+            changelogNotes = "• Added 1-Tap Over-The-Air APK download & install from GitHub Releases.\n" +
+                "• Locked in deterministic signing keystore so updates preserve all saved Boards & Pins.",
+            publishedAt = "Initial OTA"
+        )
+    )
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -51,7 +96,7 @@ object AppUpdaterService {
     suspend fun checkLatestRelease(): Result<GitHubReleaseInfo> = withContext(Dispatchers.IO) {
         runCatching {
             val request = Request.Builder()
-                .url(LATEST_RELEASE_API)
+                .url(RELEASES_LIST_API)
                 .header("Accept", "application/vnd.github+json")
                 .header("User-Agent", "InstaPin-Android/${BuildConfig.VERSION_NAME}")
                 .build()
@@ -61,17 +106,39 @@ object AppUpdaterService {
                     throw IllegalStateException("GitHub Release check returned HTTP ${response.code}")
                 }
                 val body = response.body?.string().orEmpty()
-                val root = json.parseToJsonElement(body).jsonObject
-                val tagName = root["tag_name"]?.jsonPrimitive?.content ?: "v1.0.1"
-                val name = root["name"]?.jsonPrimitive?.content ?: tagName
-                val publishedAt = root["published_at"]?.jsonPrimitive?.content ?: ""
+                val releasesArray = json.parseToJsonElement(body).jsonArray
+                if (releasesArray.isEmpty()) {
+                    throw IllegalStateException("No releases published yet")
+                }
 
-                val assets = root["assets"]?.jsonArray
+                val latestObj = releasesArray.first().jsonObject
+                val tagName = latestObj["tag_name"]?.jsonPrimitive?.content ?: "v1.0.7"
+                val name = latestObj["name"]?.jsonPrimitive?.content ?: tagName
+                val releaseBody = latestObj["body"]?.jsonPrimitive?.content?.trim().orEmpty()
+                val publishedAt = latestObj["published_at"]?.jsonPrimitive?.content?.take(16)?.replace("T", " ") ?: ""
+
+                val assets = latestObj["assets"]?.jsonArray
                 val apkUrl = assets?.firstNotNullOfOrNull { el ->
                     val obj = el.jsonObject
                     val dlUrl = obj["browser_download_url"]?.jsonPrimitive?.content.orEmpty()
                     if (dlUrl.endsWith(".apk", ignoreCase = true)) dlUrl else null
                 } ?: DIRECT_LATEST_APK_URL
+
+                val historyList = releasesArray.mapNotNull { el ->
+                    runCatching {
+                        val obj = el.jsonObject
+                        val rTag = obj["tag_name"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                        val rName = obj["name"]?.jsonPrimitive?.content ?: rTag
+                        val rBody = obj["body"]?.jsonPrimitive?.content?.trim().orEmpty()
+                        val rDate = obj["published_at"]?.jsonPrimitive?.content?.take(10) ?: ""
+                        ReleaseVersionEntry(
+                            versionTag = rTag,
+                            title = rName,
+                            changelogNotes = rBody.ifBlank { "Automated Moto G84 5G APK build ($rTag)" },
+                            publishedAt = rDate
+                        )
+                    }.getOrNull()
+                }
 
                 val remoteBuildNum = tagName.substringAfterLast(".").filter { it.isDigit() }.toIntOrNull() ?: 0
                 val currentBuildNum = BuildConfig.VERSION_NAME.substringAfterLast(".").filter { it.isDigit() }.toIntOrNull() ?: 0
@@ -79,9 +146,13 @@ object AppUpdaterService {
                 GitHubReleaseInfo(
                     tagName = tagName,
                     releaseName = name,
+                    changelogBody = releaseBody.ifBlank {
+                        builtInChangelogHistory.firstOrNull()?.changelogNotes.orEmpty()
+                    },
                     publishedAt = publishedAt,
                     apkDownloadUrl = apkUrl,
-                    isNewerThanCurrent = remoteBuildNum > currentBuildNum
+                    isNewerThanCurrent = remoteBuildNum > currentBuildNum,
+                    recentReleasesHistory = historyList.ifEmpty { builtInChangelogHistory }
                 )
             }
         }

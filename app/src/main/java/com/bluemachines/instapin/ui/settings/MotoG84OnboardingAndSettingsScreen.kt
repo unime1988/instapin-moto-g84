@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessibilityNew
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PlayArrow
@@ -30,13 +32,17 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -53,6 +59,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bluemachines.instapin.BuildConfig
+import com.bluemachines.instapin.InstaPinApp
 import com.bluemachines.instapin.data.local.UserSettings
 import com.bluemachines.instapin.data.remote.AppUpdaterService
 import com.bluemachines.instapin.data.remote.GitHubReleaseInfo
@@ -76,13 +83,31 @@ fun MotoG84OnboardingAndSettingsScreen(
     var nicheInput by remember(settings.creatorNicheDescription) { mutableStateOf(settings.creatorNicheDescription) }
     var overlayRunning by remember { mutableStateOf(FloatingOverlayService.isRunning) }
 
-    // 1-Tap In-App GitHub Updater states
+    // 1-Tap In-App GitHub Updater & Changelog states
+    val currentVersionLabel = "v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})"
     var latestRelease by remember { mutableStateOf<GitHubReleaseInfo?>(null) }
     var updateStatusText by remember {
-        mutableStateOf("Installed: v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})")
+        mutableStateOf("Checking GitHub Actions for latest version & changelog...")
     }
     var isDownloadingUpdate by remember { mutableStateOf(false) }
     var downloadProgress by remember { mutableIntStateOf(0) }
+    var showFullReleaseHistory by remember { mutableStateOf(false) }
+
+    // Automatically check GitHub Releases when opening Moto G84 Setup tab
+    LaunchedEffect(Unit) {
+        AppUpdaterService.checkLatestRelease()
+            .onSuccess { info ->
+                latestRelease = info
+                updateStatusText = if (info.isNewerThanCurrent) {
+                    "Update Ready: ${info.tagName} is newer than your installed v${BuildConfig.VERSION_NAME}"
+                } else {
+                    "You are on the latest version (${info.tagName})"
+                }
+            }
+            .onFailure {
+                updateStatusText = "Ready for 1-Tap GitHub Update"
+            }
+    }
 
     Column(
         modifier = Modifier
@@ -91,7 +116,7 @@ fun MotoG84OnboardingAndSettingsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 1-Tap GitHub Actions Over-The-Air Updater Card
+        // 1-Tap GitHub Actions Over-The-Air Updater + Version Tracker & Changelog Card
         Card(
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF181826)),
@@ -115,13 +140,118 @@ fun MotoG84OnboardingAndSettingsScreen(
                         )
                         Text(
                             text = updateStatusText,
-                            color = Color(0xFFA0A0B8),
-                            fontSize = 12.sp
+                            color = if (latestRelease?.isNewerThanCurrent == true) Color(0xFF10B981) else Color(0xFFA0A0B8),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                // Version Comparison Grid: Previous -> Current -> Latest GitHub
+                Surface(
+                    color = Color(0xFF12121C),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        VersionRowItem(
+                            label = "Previous App Version:",
+                            value = settings.previousInstalledVersion,
+                            valueColor = Color(0xFFA0A0B8)
+                        )
+                        VersionRowItem(
+                            label = "Current Installed Version:",
+                            value = currentVersionLabel,
+                            valueColor = Color.White
+                        )
+                        VersionRowItem(
+                            label = "Latest GitHub Release:",
+                            value = latestRelease?.let { "${it.tagName} (${it.publishedAt})" } ?: "Checking...",
+                            valueColor = if (latestRelease?.isNewerThanCurrent == true) Color(0xFF10B981) else Color(0xFFA78BFA)
                         )
                     }
                 }
 
                 Spacer(Modifier.height(10.dp))
+
+                // What's New Changelog Box
+                Surface(
+                    color = Color(0xFF141422),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "📋 What's New / Changelog (${latestRelease?.tagName ?: "v${BuildConfig.VERSION_NAME}"})",
+                                color = Color(0xFF10B981),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                            TextButton(
+                                onClick = { showFullReleaseHistory = !showFullReleaseHistory }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.History,
+                                    contentDescription = null,
+                                    tint = Color(0xFFA78BFA),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = if (showFullReleaseHistory) "Hide History" else "All Versions",
+                                    color = Color(0xFFA78BFA),
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+
+                        val activeChangelog = latestRelease?.changelogBody?.ifBlank { null }
+                            ?: AppUpdaterService.builtInChangelogHistory.first().changelogNotes
+
+                        Text(
+                            text = activeChangelog,
+                            color = Color(0xFFE2E2F0),
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp
+                        )
+
+                        if (showFullReleaseHistory) {
+                            Spacer(Modifier.height(8.dp))
+                            HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+                            Spacer(Modifier.height(8.dp))
+                            val historyList = latestRelease?.recentReleasesHistory?.ifEmpty { null }
+                                ?: AppUpdaterService.builtInChangelogHistory
+                            historyList.forEach { entry ->
+                                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                                    Text(
+                                        text = "${entry.versionTag} — ${entry.title}",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp
+                                    )
+                                    Text(
+                                        text = entry.changelogNotes,
+                                        color = Color(0xFFA0A0B8),
+                                        fontSize = 11.sp,
+                                        lineHeight = 16.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
 
                 if (isDownloadingUpdate) {
                     LinearProgressIndicator(
@@ -150,9 +280,9 @@ fun MotoG84OnboardingAndSettingsScreen(
                                     .onSuccess { info ->
                                         latestRelease = info
                                         updateStatusText = if (info.isNewerThanCurrent) {
-                                            "New update available: ${info.tagName} (${info.releaseName})"
+                                            "New update available: ${info.tagName}"
                                         } else {
-                                            "Latest GitHub release: ${info.tagName} (Installed: v${BuildConfig.VERSION_NAME})"
+                                            "Up to date: ${info.tagName} (Installed: v${BuildConfig.VERSION_NAME})"
                                         }
                                     }
                                     .onFailure { err ->
@@ -172,6 +302,7 @@ fun MotoG84OnboardingAndSettingsScreen(
                             coroutineScope.launch {
                                 isDownloadingUpdate = true
                                 downloadProgress = 0
+                                (context.applicationContext as? InstaPinApp)?.preferences?.recordVersionBeforeUpdate()
                                 val targetUrl = latestRelease?.apkDownloadUrl
                                     ?: "https://github.com/unime1988/instapin-moto-g84/releases/latest/download/InstaPin-MotoG84.apk"
                                 AppUpdaterService.downloadAndTriggerInstall(
@@ -448,6 +579,31 @@ fun MotoG84OnboardingAndSettingsScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun VersionRowItem(
+    label: String,
+    value: String,
+    valueColor: Color
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            color = Color(0xFFA0A0B8),
+            fontSize = 12.sp
+        )
+        Text(
+            text = value,
+            color = valueColor,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 

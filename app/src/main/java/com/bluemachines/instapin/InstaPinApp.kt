@@ -4,6 +4,9 @@ import android.app.Application
 import com.bluemachines.instapin.data.local.AppDatabase
 import com.bluemachines.instapin.data.local.AppPreferences
 import com.bluemachines.instapin.data.repository.PinRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class InstaPinApp : Application() {
 
@@ -24,5 +27,8 @@ class InstaPinApp : Application() {
             database = database,
             preferences = preferences
         )
+        CoroutineScope(Dispatchers.IO).launch {
+            preferences.syncInstalledVersionOnStartup()
+        }
     }
 }

@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.bluemachines.instapin.BuildConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -20,7 +21,9 @@ data class UserSettings(
     val autoAnalyzePhase2OnSave: Boolean = false,
     val creatorNicheDescription: String = "Educational content creator in Video Editing, Trading, Health, and Career growth",
     val bubbleSideRight: Boolean = true,
-    val bubbleVerticalPercent: Int = 55
+    val bubbleVerticalPercent: Int = 55,
+    val previousInstalledVersion: String = "None (First Install)",
+    val lastRecordedCurrentVersion: String = BuildConfig.VERSION_NAME
 )
 
 class AppPreferences(private val context: Context) {
@@ -34,6 +37,8 @@ class AppPreferences(private val context: Context) {
         private val KEY_CREATOR_NICHE = stringPreferencesKey("creator_niche")
         private val KEY_BUBBLE_RIGHT = booleanPreferencesKey("bubble_side_right")
         private val KEY_BUBBLE_Y_PERCENT = intPreferencesKey("bubble_y_percent")
+        private val KEY_PREVIOUS_VERSION = stringPreferencesKey("previous_installed_version")
+        private val KEY_LAST_RECORDED_VERSION = stringPreferencesKey("last_recorded_version")
     }
 
     val settingsFlow: Flow<UserSettings> = context.dataStore.data.map { prefs ->
@@ -46,11 +51,38 @@ class AppPreferences(private val context: Context) {
             creatorNicheDescription = prefs[KEY_CREATOR_NICHE]
                 ?: "Educational content creator in Video Editing, Trading, Health, and Career growth",
             bubbleSideRight = prefs[KEY_BUBBLE_RIGHT] ?: true,
-            bubbleVerticalPercent = prefs[KEY_BUBBLE_Y_PERCENT] ?: 55
+            bubbleVerticalPercent = prefs[KEY_BUBBLE_Y_PERCENT] ?: 55,
+            previousInstalledVersion = prefs[KEY_PREVIOUS_VERSION] ?: "v1.0.3 (Initial Install)",
+            lastRecordedCurrentVersion = prefs[KEY_LAST_RECORDED_VERSION] ?: BuildConfig.VERSION_NAME
         )
     }
 
     suspend fun getSettings(): UserSettings = settingsFlow.first()
+
+    /**
+     * Automatically tracks version transitions on app startup or before an in-app update
+     * so the user can always see "Previous Version -> Current Version".
+     */
+    suspend fun syncInstalledVersionOnStartup() {
+        val currentVer = "v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})"
+        context.dataStore.edit { prefs ->
+            val recorded = prefs[KEY_LAST_RECORDED_VERSION]
+            if (recorded == null) {
+                prefs[KEY_PREVIOUS_VERSION] = "v1.0.3 (Initial Install)"
+                prefs[KEY_LAST_RECORDED_VERSION] = currentVer
+            } else if (recorded != currentVer) {
+                prefs[KEY_PREVIOUS_VERSION] = recorded
+                prefs[KEY_LAST_RECORDED_VERSION] = currentVer
+            }
+        }
+    }
+
+    suspend fun recordVersionBeforeUpdate() {
+        val currentVer = "v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})"
+        context.dataStore.edit { prefs ->
+            prefs[KEY_PREVIOUS_VERSION] = currentVer
+        }
+    }
 
     suspend fun updateGeminiApiKey(apiKey: String) {
         context.dataStore.edit { it[KEY_GEMINI_API] = apiKey.trim() }

@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 10
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -48,18 +50,24 @@ jobs:
           gradle assembleDebug
           cp app/build/outputs/apk/debug/app-debug.apk InstaPin-MotoG84.apk
 
+      - name: Generate Release Changelog Notes
+        run: |
+          echo "### What's New in v1.0.${{ github.run_number }}" > RELEASE_CHANGELOG.md
+          git log -n 4 --pretty=format:"• %s" >> RELEASE_CHANGELOG.md
+          echo "" >> RELEASE_CHANGELOG.md
+
       - name: Upload InstaPin APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: InstaPin-MotoG84-debug-apk
           path: InstaPin-MotoG84.apk
 
-      - name: Publish Latest APK to GitHub Releases for 1-Tap In-App Updater
+      - name: Publish Latest APK & Changelog to GitHub Releases
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: InstaPin v1.0.${{ github.run_number }} (Moto G84 5G)
-          body: "Automated GitHub Actions APK build #${{ github.run_number }} for Moto G84 5G. Tap 'Download & Update' inside InstaPin's Moto G84 Setup tab to update in 1 tap."
+          body_path: RELEASE_CHANGELOG.md
           files: InstaPin-MotoG84.apk
           prerelease: false
