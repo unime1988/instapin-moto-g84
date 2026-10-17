@@ -20,11 +20,30 @@ import com.bluemachines.instapin.data.remote.ApiConnectionTestResult
 import com.bluemachines.instapin.data.remote.GeminiAiService
 import com.bluemachines.instapin.data.remote.InstagramExportJsonParser
 import com.bluemachines.instapin.data.remote.InstagramMetadataExtractor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+
+data class SaveTimingReport(
+    val timestampMillis: Long = System.currentTimeMillis(),
+    val shortcode: String = "",
+    val authorHandle: String = "",
+    val boardSummary: String = "",
+    val tapToOpenCardMs: Long? = null,
+    val localDbSaveMs: Long = 0L,
+    val backgroundMetadataMs: Long? = null,
+    val backgroundAiMs: Long? = null,
+    val enrichmentStatus: String = "Saved locally (enriching in background...)"
+)
 
 @Serializable
 data class BackupPinItem(
@@ -53,6 +72,12 @@ class PinRepository(
     private val boardDao = database.boardDao()
     private val analysisDao = database.analysisDao()
     private val importDao = database.importDao()
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    companion object {
+        private val _lastSaveTiming = MutableStateFlow<SaveTimingReport?>(null)
+        val lastSaveTiming: StateFlow<SaveTimingReport?> = _lastSaveTiming.asStateFlow()
+    }
 
     private val snapshotJson = Json {
         ignoreUnknownKeys = true
@@ -82,10 +107,12 @@ class PinRepository(
     }
 
     /**
-     * Phase 1 Core Save Pipeline:
-     * 1. Normalizes Instagram URL & enriches with OpenGraph metadata (without downloading video).
-     * 2. Classifies Domain, Subject, Boards, and Moods via selected BYOK AI Provider (or instant local heuristic).
-     * 3. Stores the VideoPin instance and links it to 1 or multiple Boards and Moods.
+     * Phase 1 Core Save Pipeline (Instant Local-First):
+     * 1. Normalizes the Instagram URL & classifies immediately using the local heuristic (<20ms).
+     * 2. Saves the VideoPin + Board/Mood links into Room immediately and returns so the overlay
+     *    dismisses in milliseconds.
+     * 3. Launches OpenGraph metadata enrichment + BYOK AI classification + optional Phase 2
+     *    in `backgroundScope` so network timeouts never block the user's save tap.
      */
     suspend fun saveOrUpdateInstagramPin(
         rawUrl: String?,
@@ -96,62 +123,59 @@ class PinRepository(
         explicitMoodIds: List<Long> = emptyList(),
         userNotes: String = "",
         captureSource: CaptureSource = CaptureSource.LIVE_RADIAL_OVERLAY,
-        runPhase2Immediately: Boolean = false
+        runPhase2Immediately: Boolean = false,
+        tapToOpenCardMs: Long? = null
     ): PopulatedVideoPin {
-        val extracted = metadataExtractor.enrichMetadata(
+        val saveStartedAt = System.currentTimeMillis()
+        val (normalizedUrl, shortcode) = InstagramMetadataExtractor.normalizeInstagramUrl(
             rawUrl = rawUrl,
-            screenAuthorHandle = screenAuthorHandle,
-            screenCaption = screenCaption,
-            screenAudioTrack = screenAudioTrack
+            fallbackAuthor = screenAuthorHandle,
+            fallbackCaption = screenCaption
         )
 
-        val settings = preferences.getSettings()
         val allBoards = boardDao.getAllBoards()
         val allMoods = boardDao.getAllMoodTags()
+        val cleanScreenAuthor = screenAuthorHandle.removePrefix("@").trim().ifBlank { "instagram_reel" }
+        val cleanScreenCaption = screenCaption.trim()
+        val initialHashtags = InstagramMetadataExtractor.extractHashtags(cleanScreenCaption)
 
-        val classification = geminiAiService.classifyPinPhase1(
-            apiKey = settings.geminiApiKey,
-            model = settings.geminiModel,
-            authorHandle = extracted.authorHandle,
-            caption = extracted.caption,
-            audioTrack = extracted.audioTrackName,
-            availableBoardNames = allBoards.map { it.name },
-            availableMoodNames = allMoods.map { it.name },
-            provider = settings.aiProvider
+        val localClassification = geminiAiService.heuristicClassify(
+            authorHandle = cleanScreenAuthor,
+            caption = cleanScreenCaption,
+            availableBoards = allBoards.map { it.name },
+            availableMoods = allMoods.map { it.name }
         )
 
-        val existingPin = pinDao.getPinByShortcode(extracted.shortcode)
+        val existingPin = pinDao.getPinByShortcode(shortcode)
         val now = System.currentTimeMillis()
 
         val pinToSave = if (existingPin != null) {
             existingPin.copy(
-                instagramUrl = extracted.normalizedUrl,
-                authorHandle = extracted.authorHandle.ifBlank { existingPin.authorHandle },
-                authorDisplayName = extracted.authorDisplayName.ifBlank { existingPin.authorDisplayName },
-                caption = extracted.caption.ifBlank { existingPin.caption },
-                audioTrackName = extracted.audioTrackName.ifBlank { existingPin.audioTrackName },
-                thumbnailUrl = extracted.thumbnailUrl.ifBlank { existingPin.thumbnailUrl },
-                domainCategory = classification.domainCategory.ifBlank { existingPin.domainCategory },
-                subjectTopic = classification.subjectTopic.ifBlank { existingPin.subjectTopic },
-                hashtagsCsv = extracted.hashtags.joinToString(","),
+                instagramUrl = normalizedUrl,
+                authorHandle = if (cleanScreenAuthor != "instagram_reel") cleanScreenAuthor else existingPin.authorHandle,
+                caption = cleanScreenCaption.ifBlank { existingPin.caption },
+                audioTrackName = screenAudioTrack.ifBlank { existingPin.audioTrackName },
+                domainCategory = localClassification.domainCategory.ifBlank { existingPin.domainCategory },
+                subjectTopic = localClassification.subjectTopic.ifBlank { existingPin.subjectTopic },
+                hashtagsCsv = if (initialHashtags.isNotEmpty()) initialHashtags.joinToString(",") else existingPin.hashtagsCsv,
                 userNotes = if (userNotes.isNotBlank()) userNotes else existingPin.userNotes,
                 savedAt = now
             )
         } else {
             VideoPin(
-                instagramUrl = extracted.normalizedUrl,
-                shortcode = extracted.shortcode,
-                authorHandle = extracted.authorHandle,
-                authorDisplayName = extracted.authorDisplayName,
-                caption = extracted.caption.ifBlank { classification.oneLineSummary },
-                audioTrackName = extracted.audioTrackName,
-                thumbnailUrl = extracted.thumbnailUrl,
-                domainCategory = classification.domainCategory,
-                subjectTopic = classification.subjectTopic,
-                hashtagsCsv = extracted.hashtags.joinToString(","),
+                instagramUrl = normalizedUrl,
+                shortcode = shortcode,
+                authorHandle = cleanScreenAuthor,
+                authorDisplayName = "",
+                caption = cleanScreenCaption.ifBlank { localClassification.oneLineSummary },
+                audioTrackName = screenAudioTrack,
+                thumbnailUrl = "",
+                domainCategory = localClassification.domainCategory,
+                subjectTopic = localClassification.subjectTopic,
+                hashtagsCsv = initialHashtags.joinToString(","),
                 savedAt = now,
                 userNotes = userNotes,
-                isReachable = extracted.isReachable,
+                isReachable = true,
                 captureSource = captureSource
             )
         }
@@ -161,7 +185,7 @@ class PinRepository(
         val targetBoardIds = if (explicitBoardIds.isNotEmpty()) {
             explicitBoardIds
         } else {
-            val matchedIds = classification.suggestedBoards.mapNotNull { suggestedName ->
+            val matchedIds = localClassification.suggestedBoards.mapNotNull { suggestedName ->
                 allBoards.firstOrNull { it.name.equals(suggestedName, ignoreCase = true) }?.id
             }
             matchedIds.ifEmpty { listOfNotNull(allBoards.firstOrNull()?.id) }
@@ -174,7 +198,7 @@ class PinRepository(
         val targetMoodIds = if (explicitMoodIds.isNotEmpty()) {
             explicitMoodIds
         } else {
-            classification.suggestedMoods.mapNotNull { suggestedMood ->
+            localClassification.suggestedMoods.mapNotNull { suggestedMood ->
                 allMoods.firstOrNull { it.name.equals(suggestedMood, ignoreCase = true) }?.id
             }
         }
@@ -183,14 +207,132 @@ class PinRepository(
             pinDao.insertPinMoodCrossRef(PinMoodCrossRef(pinId = pinId, moodId = moodId))
         }
 
-        val boardRequiresAutoPhase2 = allBoards.any { it.id in targetBoardIds && it.autoAnalyzePhase2 }
-        if (runPhase2Immediately || settings.autoAnalyzePhase2OnSave || boardRequiresAutoPhase2) {
-            runCatching {
-                runPhase2DeepAnalysis(pinId)
-            }
+        val populated = pinDao.getPopulatedPinById(pinId)!!
+        val localSaveElapsedMs = (System.currentTimeMillis() - saveStartedAt).coerceAtLeast(1L)
+        val boardSummary = populated.boards.joinToString(", ") { "${it.emoji} ${it.name}" }
+
+        _lastSaveTiming.value = SaveTimingReport(
+            timestampMillis = System.currentTimeMillis(),
+            shortcode = shortcode,
+            authorHandle = populated.pin.authorHandle,
+            boardSummary = boardSummary,
+            tapToOpenCardMs = tapToOpenCardMs,
+            localDbSaveMs = localSaveElapsedMs,
+            enrichmentStatus = "Local save complete in ${localSaveElapsedMs}ms • enriching metadata in background…"
+        )
+
+        // Fire-and-forget background network enrichment (OpenGraph + BYOK AI + optional Phase 2)
+        backgroundScope.launch {
+            enrichSavedPinInBackground(
+                pinId = pinId,
+                rawUrl = rawUrl,
+                screenAuthorHandle = screenAuthorHandle,
+                screenCaption = screenCaption,
+                screenAudioTrack = screenAudioTrack,
+                explicitBoardIds = explicitBoardIds,
+                explicitMoodIds = explicitMoodIds,
+                targetBoardIds = targetBoardIds,
+                runPhase2Immediately = runPhase2Immediately
+            )
         }
 
-        return pinDao.getPopulatedPinById(pinId)!!
+        return populated
+    }
+
+    private suspend fun enrichSavedPinInBackground(
+        pinId: Long,
+        rawUrl: String?,
+        screenAuthorHandle: String,
+        screenCaption: String,
+        screenAudioTrack: String,
+        explicitBoardIds: List<Long>,
+        explicitMoodIds: List<Long>,
+        targetBoardIds: List<Long>,
+        runPhase2Immediately: Boolean
+    ) {
+        runCatching {
+            val metaStart = System.currentTimeMillis()
+            val extracted = metadataExtractor.enrichMetadata(
+                rawUrl = rawUrl,
+                screenAuthorHandle = screenAuthorHandle,
+                screenCaption = screenCaption,
+                screenAudioTrack = screenAudioTrack
+            )
+            val metaMs = System.currentTimeMillis() - metaStart
+
+            val settings = preferences.getSettings()
+            val allBoards = boardDao.getAllBoards()
+            val allMoods = boardDao.getAllMoodTags()
+
+            val aiStart = System.currentTimeMillis()
+            val classification = geminiAiService.classifyPinPhase1(
+                apiKey = settings.geminiApiKey,
+                model = settings.geminiModel,
+                authorHandle = extracted.authorHandle,
+                caption = extracted.caption,
+                audioTrack = extracted.audioTrackName,
+                availableBoardNames = allBoards.map { it.name },
+                availableMoodNames = allMoods.map { it.name },
+                provider = settings.aiProvider
+            )
+            val aiMs = System.currentTimeMillis() - aiStart
+
+            val current = pinDao.getPopulatedPinById(pinId)?.pin ?: return@runCatching
+            val updatedPin = current.copy(
+                instagramUrl = extracted.normalizedUrl.ifBlank { current.instagramUrl },
+                shortcode = extracted.shortcode.ifBlank { current.shortcode },
+                authorHandle = extracted.authorHandle
+                    .takeIf { it.isNotBlank() && it != "unknown_creator" }
+                    ?: current.authorHandle,
+                authorDisplayName = extracted.authorDisplayName.ifBlank { current.authorDisplayName },
+                caption = extracted.caption.ifBlank { current.caption.ifBlank { classification.oneLineSummary } },
+                audioTrackName = extracted.audioTrackName.ifBlank { current.audioTrackName },
+                thumbnailUrl = extracted.thumbnailUrl.ifBlank { current.thumbnailUrl },
+                domainCategory = classification.domainCategory.ifBlank { current.domainCategory },
+                subjectTopic = classification.subjectTopic.ifBlank { current.subjectTopic },
+                hashtagsCsv = if (extracted.hashtags.isNotEmpty()) {
+                    extracted.hashtags.joinToString(",")
+                } else {
+                    current.hashtagsCsv
+                },
+                isReachable = extracted.isReachable
+            )
+            pinDao.updatePin(updatedPin)
+
+            if (explicitBoardIds.isEmpty()) {
+                classification.suggestedBoards.mapNotNull { suggestedName ->
+                    allBoards.firstOrNull { it.name.equals(suggestedName, ignoreCase = true) }?.id
+                }.forEach { boardId ->
+                    pinDao.insertPinBoardCrossRef(PinBoardCrossRef(pinId = pinId, boardId = boardId))
+                }
+            }
+
+            if (explicitMoodIds.isEmpty()) {
+                classification.suggestedMoods.mapNotNull { suggestedMood ->
+                    allMoods.firstOrNull { it.name.equals(suggestedMood, ignoreCase = true) }?.id
+                }.forEach { moodId ->
+                    pinDao.insertPinMoodCrossRef(PinMoodCrossRef(pinId = pinId, moodId = moodId))
+                }
+            }
+
+            _lastSaveTiming.value = _lastSaveTiming.value?.copy(
+                authorHandle = updatedPin.authorHandle,
+                backgroundMetadataMs = metaMs,
+                backgroundAiMs = aiMs,
+                enrichmentStatus = "Background enrichment finished (IG metadata ${metaMs}ms, AI ${aiMs}ms)"
+            )
+
+            val boardRequiresAutoPhase2 = allBoards.any { it.id in targetBoardIds && it.autoAnalyzePhase2 }
+            if (runPhase2Immediately || settings.autoAnalyzePhase2OnSave || boardRequiresAutoPhase2) {
+                runCatching {
+                    runPhase2DeepAnalysis(pinId)
+                }
+            }
+        }.onFailure { err ->
+            _lastSaveTiming.value = _lastSaveTiming.value?.copy(
+                enrichmentStatus = "Saved locally; background enrichment skipped (${err.message?.take(60) ?: "offline"})"
+            )
+        }
     }
 
     /**

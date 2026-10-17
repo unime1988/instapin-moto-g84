@@ -306,27 +306,25 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
     }
 
     /**
-     * 1. While Instagram holds focus, run the Share -> Copy link automation.
-     * 2a. If InstaPin was tapped in the Android share screen, Instagram itself launches
-     *     ShareReceiverActivity with the exact URL - so we only hand over the board choice
-     *     and do NOT launch a second save request (prevents duplicate/Legacy pins).
-     * 2b. Otherwise launch ShareReceiverActivity, a focused foreground Activity, which is
-     *     the only place Android 10+ lets us read the copied link from the clipboard.
+     * Clipboard-first fast path:
+     * Launches ShareReceiverActivity IMMEDIATELY (0ms delay) so when the user already copied
+     * the Reel link in Instagram, the save card opens right away and reads the clipboard as
+     * soon as it gains window focus.
      */
-    private suspend fun captureReelAndOpenSaveScreen(
+    private fun captureReelAndOpenSaveScreen(
         preselectedBoardId: Long,
         author: String,
         caption: String,
         audioTrack: String
     ) {
+        val now = System.currentTimeMillis()
         ShareReceiverActivity.pendingFloatingSave = ShareReceiverActivity.PendingFloatingSave(
             preselectedBoardId = preselectedBoardId,
             author = author,
             caption = caption,
-            audioTrack = audioTrack
+            audioTrack = audioTrack,
+            createdAtMillis = now
         )
-        val outcome = InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
-        if (outcome == ReelCaptureOutcome.SENT_TO_INSTAPIN_SHARE_TARGET) return
 
         val actIntent = Intent(this, ShareReceiverActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -335,6 +333,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
             putExtra(ShareReceiverActivity.EXTRA_AUTHOR_HANDLE, author)
             putExtra(ShareReceiverActivity.EXTRA_CAPTION, caption)
             putExtra(ShareReceiverActivity.EXTRA_AUDIO_TRACK, audioTrack)
+            putExtra(ShareReceiverActivity.EXTRA_TAP_STARTED_AT_MS, now)
         }
         startActivity(actIntent)
     }

@@ -49,16 +49,17 @@ class ShareReceiverActivity : ComponentActivity() {
         const val EXTRA_AUTHOR_HANDLE = "extra_author_handle"
         const val EXTRA_CAPTION = "extra_caption"
         const val EXTRA_AUDIO_TRACK = "extra_audio_track"
+        const val EXTRA_TAP_STARTED_AT_MS = "extra_tap_started_at_ms"
 
         /** Single tap on the bubble: show the save card instead of auto-saving. */
         const val NO_PRESELECTED_BOARD = -99L
 
         private const val PENDING_SAVE_MAX_AGE_MS = 20_000L
-        private const val CLIPBOARD_MAX_AGE_MS = 90_000L
-        private const val CLIPBOARD_PRE_CAPTURE_GRACE_MS = 20_000L
+        private const val CLIPBOARD_MAX_AGE_MS = 120_000L
+        private const val CLIPBOARD_PRE_CAPTURE_GRACE_MS = 30_000L
 
         /**
-         * Set by FloatingOverlayService right before the automation runs, so if the URL arrives
+         * Set by FloatingOverlayService right before the save card opens, so if the URL arrives
          * through the Android share screen (ACTION_SEND) we still know which board was chosen.
          */
         @Volatile
@@ -69,6 +70,8 @@ class ShareReceiverActivity : ComponentActivity() {
     private var urlCameFromShareIntent = false
     private var handledDirectRadialSave = false
     private var activeSaveContext by mutableStateOf<PendingFloatingSave?>(null)
+    private var tapStartedAtMs: Long = 0L
+    private var tapToOpenCardMs: Long? = null
 
     private val clipboardListener =
         ClipboardManager.OnPrimaryClipChangedListener {
@@ -150,13 +153,20 @@ class ShareReceiverActivity : ComponentActivity() {
         }
         pendingFloatingSave = null
 
+        val incomingTapMs = incoming?.getLongExtra(EXTRA_TAP_STARTED_AT_MS, 0L)?.takeIf { it > 0L }
+            ?: pending?.createdAtMillis
+            ?: System.currentTimeMillis()
+        tapStartedAtMs = incomingTapMs
+        tapToOpenCardMs = null
+
         activeSaveContext = when {
             fromFloatingPin -> PendingFloatingSave(
                 preselectedBoardId = incoming?.getLongExtra(EXTRA_PRESELECTED_BOARD_ID, NO_PRESELECTED_BOARD)
                     ?: NO_PRESELECTED_BOARD,
                 author = incoming?.getStringExtra(EXTRA_AUTHOR_HANDLE).orEmpty(),
                 caption = incoming?.getStringExtra(EXTRA_CAPTION).orEmpty(),
-                audioTrack = incoming?.getStringExtra(EXTRA_AUDIO_TRACK).orEmpty()
+                audioTrack = incoming?.getStringExtra(EXTRA_AUDIO_TRACK).orEmpty(),
+                createdAtMillis = incomingTapMs
             )
             !fromShare.isNullOrBlank() -> pending
             else -> null
@@ -199,17 +209,20 @@ class ShareReceiverActivity : ComponentActivity() {
     }
 
     private fun runClipboardCaptureAndDirectSave() {
+        if (tapToOpenCardMs == null && tapStartedAtMs > 0L) {
+            tapToOpenCardMs = (System.currentTimeMillis() - tapStartedAtMs).coerceAtLeast(1L)
+        }
         lifecycleScope.launch {
             if (!urlCameFromShareIntent) {
                 var attempts = 0
-                while (attempts < 5) {
+                while (attempts < 3) {
                     val clipUrl = readClipboardInstagramUrl(requireFresh = true)
                     if (!clipUrl.isNullOrBlank()) {
                         capturedInstagramUrl = clipUrl
                         break
                     }
                     attempts++
-                    delay(if (attempts == 1) 150L else 450L)
+                    delay(if (attempts == 1) 50L else 120L)
                 }
             }
 
@@ -283,6 +296,7 @@ class ShareReceiverActivity : ComponentActivity() {
     ) {
         val app = applicationContext as InstaPinApp
         lifecycleScope.launch {
+            val saveStartedAt = System.currentTimeMillis()
             val saved = withContext(Dispatchers.IO) {
                 app.repository.saveOrUpdateInstagramPin(
                     rawUrl = rawUrl,
@@ -293,19 +307,21 @@ class ShareReceiverActivity : ComponentActivity() {
                     explicitMoodIds = moodIds,
                     userNotes = notes,
                     captureSource = CaptureSource.ANDROID_SHARE_SHEET,
-                    runPhase2Immediately = runPhase2
+                    runPhase2Immediately = runPhase2,
+                    tapToOpenCardMs = tapToOpenCardMs
                 )
             }
+            val saveElapsedMs = (System.currentTimeMillis() - saveStartedAt).coerceAtLeast(1L)
             val boardNames = saved.boards.joinToString(", ") { "${it.emoji} ${it.name}" }
             val hasVideoCode = saved.pin.instagramUrl.contains("/reel/") ||
                 saved.pin.instagramUrl.contains("/p/") ||
                 saved.pin.instagramUrl.contains("/share/")
             val linkStatus = if (hasVideoCode) {
-                "🔗 Exact Reel Video Saved"
+                "🔗 Saved in ${saveElapsedMs}ms"
             } else {
                 val failedStep = InstaPinAccessibilityService.lastCaptureReport.value
                     ?.firstFailedStep?.let { " (auto-capture failed at: $it)" }.orEmpty()
-                "Saved @${saved.pin.authorHandle} without exact link$failedStep"
+                "Saved @${saved.pin.authorHandle} (${saveElapsedMs}ms, without exact link)$failedStep"
             }
             Toast.makeText(
                 this@ShareReceiverActivity,

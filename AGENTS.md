@@ -49,6 +49,13 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 3. (Optional) Paste your **Google Gemini API Key** (`AIza...`) in the AI Configuration card and tap **Save AI Settings**.
 4. Tap **Start Hover Bubble** and open Instagram Reels!
 
+### Protected Stable Baseline (`v1.0.15` / commit `58c6a1f`)
+- **Stable working flow:** In Instagram, manually tap **Share -> Copy link** on the Reel -> tap the InstaPin floating bubble -> `ShareReceiverActivity` reads the copied Reel URL on window focus -> tap a category/board -> save.
+- **Rules for future changes:**
+  1. Never rewrite or remove this manual **Copy link -> tap bubble -> pick category -> save** flow.
+  2. Ship every change as a new GitHub Actions release (`v1.0.17+`) with `versionCode = 100` and persistent debug signing so **Download & Update** installs in-place without losing pins, boards, or settings.
+  3. Keep `v1.0.15` (`58c6a1f`) available in **Moto G84 Setup -> All Versions / Rollback** as the stable rollback baseline.
+
 ### Exact Reel Link Capture (Debugging)
 - No local Android SDK/adb on the Mac: verify builds via GitHub Actions (`curl https://api.github.com/repos/unime1988/instapin-moto-g84/actions/runs?per_page=1`), then download the release APK.
 - Android 10+ only lets the focused app read the clipboard, so clipboard reads happen in `ShareReceiverActivity` (on window focus), never in the overlay service.

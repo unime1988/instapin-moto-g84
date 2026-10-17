@@ -78,6 +78,7 @@ import com.bluemachines.instapin.data.local.UserSettings
 import com.bluemachines.instapin.data.remote.ApiConnectionTestResult
 import com.bluemachines.instapin.data.remote.AppUpdaterService
 import com.bluemachines.instapin.data.remote.GitHubReleaseInfo
+import com.bluemachines.instapin.data.repository.PinRepository
 import com.bluemachines.instapin.service.FloatingOverlayService
 import com.bluemachines.instapin.service.InstaPinAccessibilityService
 import kotlinx.coroutines.launch
@@ -99,6 +100,7 @@ fun MotoG84OnboardingAndSettingsScreen(
     val hasOverlayPermission = Settings.canDrawOverlays(context)
     val accessibilityConnected by InstaPinAccessibilityService.isServiceConnected.collectAsState()
     val lastCaptureReport by InstaPinAccessibilityService.lastCaptureReport.collectAsState()
+    val lastSaveTiming by PinRepository.lastSaveTiming.collectAsState()
 
     var selectedProvider by remember(settings.aiProvider) { mutableStateOf(settings.aiProvider) }
     var apiKeyInput by remember(settings.geminiApiKey) { mutableStateOf(settings.geminiApiKey) }
@@ -870,6 +872,38 @@ fun MotoG84OnboardingAndSettingsScreen(
                         Icon(Icons.Default.Stop, contentDescription = null)
                         Spacer(Modifier.width(4.dp))
                         Text("Stop")
+                    }
+                }
+
+                lastSaveTiming?.let { timing ->
+                    Spacer(Modifier.height(14.dp))
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color(0xFF0B2E1F),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "Last Pin Save Speed",
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            val openPart = timing.tapToOpenCardMs?.let { "Bubble → Card: ${it}ms  •  " }.orEmpty()
+                            Text(
+                                text = "${openPart}Category Tap → Local Save: ${timing.localDbSaveMs}ms",
+                                color = Color(0xFF34D399),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = timing.enrichmentStatus,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp
+                            )
+                        }
                     }
                 }
 
