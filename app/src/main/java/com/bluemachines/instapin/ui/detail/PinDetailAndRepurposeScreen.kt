@@ -211,6 +211,32 @@ fun PinDetailAndRepurposeScreen(
                         fontSize = 13.sp
                     )
 
+                    Spacer(Modifier.height(8.dp))
+                    val hasExactReelLink = pin.instagramUrl.contains("/reel/", ignoreCase = true) ||
+                        pin.instagramUrl.contains("/p/", ignoreCase = true) ||
+                        pin.instagramUrl.contains("/share/", ignoreCase = true)
+
+                    Surface(
+                        color = if (hasExactReelLink) {
+                            Color(0xFF10B981).copy(alpha = 0.14f)
+                        } else {
+                            Color(0xFFF59E0B).copy(alpha = 0.16f)
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = if (hasExactReelLink) {
+                                "🔗 Exact Video Link: ${pin.instagramUrl}"
+                            } else {
+                                "⚠️ Legacy Pin (saved before v1.0.12 without Reel URL): ${pin.instagramUrl} — New pins automatically copy the exact Reel link!"
+                            },
+                            color = if (hasExactReelLink) Color(0xFF10B981) else Color(0xFFF59E0B),
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
+
                     Spacer(Modifier.height(10.dp))
 
                     // Boards & Moods badges
@@ -256,7 +282,7 @@ fun PinDetailAndRepurposeScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Phase 2: AI Repurpose & Video Studio",
                         color = Color.White,
@@ -274,6 +300,8 @@ fun PinDetailAndRepurposeScreen(
                     )
                 }
 
+                Spacer(Modifier.width(10.dp))
+
                 Button(
                     onClick = { onTriggerPhase2Analysis(pin.id) },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
@@ -284,7 +312,8 @@ fun PinDetailAndRepurposeScreen(
                     Text(
                         text = if (analysis == null) "Analyze Video" else "Re-Analyze",
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
                     )
                 }
             }

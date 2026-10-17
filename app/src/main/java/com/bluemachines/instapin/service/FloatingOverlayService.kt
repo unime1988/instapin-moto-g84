@@ -40,6 +40,7 @@ import com.bluemachines.instapin.data.remote.InstagramMetadataExtractor
 import com.bluemachines.instapin.ui.overlay.PinterestRadialOverlay
 import com.bluemachines.instapin.ui.overlay.QuickSaveOverlaySheet
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -211,14 +212,21 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                             onSingleTapOpenSheet = {
                                 vibrateTick()
                                 lifecycleScope.launch {
-                                    // While Instagram is still the active window, auto-click Share -> Copy Link
-                                    // so the exact Reel video permalink (instagram.com/reel/...) is captured!
+                                    // Step 1: While Instagram still has focus, click Share -> Copy Link via Accessibility
                                     if (screenContext.isInstagramForeground) {
                                         InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
-                                        lastAutoCapturedReelUrl = readInstagramUrlFromClipboard()
                                     }
+                                    // Step 2: Expand & make our overlay window FOCUSABLE first!
+                                    // On Android 10-14 (Moto G84 5G), ClipboardManager.primaryClip only returns the copied URL
+                                    // AFTER our overlay window holds input focus!
                                     isQuickSheetExpanded = true
                                     updateWindowMode(fullScreen = true, focusable = true)
+                                    delay(220)
+                                    lastAutoCapturedReelUrl = readInstagramUrlFromClipboard()
+                                    if (lastAutoCapturedReelUrl.isNullOrBlank()) {
+                                        delay(250)
+                                        lastAutoCapturedReelUrl = readInstagramUrlFromClipboard()
+                                    }
                                 }
                             },
                             onRadialBoardSelected = { selectedBoard: Board? ->
@@ -331,12 +339,16 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
     ) {
         val app = applicationContext as InstaPinApp
         lifecycleScope.launch {
-            var resolvedUrl = explicitUrl
+            var resolvedUrl = explicitUrl ?: lastAutoCapturedReelUrl ?: readInstagramUrlFromClipboard()
             if (resolvedUrl.isNullOrBlank()) {
-                // Ensure our overlay does not hold window focus while Accessibility clicks Instagram's Share -> Copy Link
+                // Step 1: Ensure Instagram holds focus while Accessibility clicks Share -> Copy Link
                 updateWindowMode(fullScreen = false, focusable = false)
                 InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
-                resolvedUrl = readInstagramUrlFromClipboard() ?: lastAutoCapturedReelUrl
+                // Step 2: Briefly give our overlay window focus for 180ms so Android 14 allows reading the clipboard!
+                updateWindowMode(fullScreen = false, focusable = true)
+                delay(180)
+                resolvedUrl = readInstagramUrlFromClipboard()
+                updateWindowMode(fullScreen = false, focusable = false)
             }
             lastAutoCapturedReelUrl = null
 

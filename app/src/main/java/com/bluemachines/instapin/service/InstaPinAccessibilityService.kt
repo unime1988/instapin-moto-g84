@@ -188,8 +188,9 @@ class InstaPinAccessibilityService : AccessibilityService() {
         if (cleaned.length !in 3..30) return false
         if (cleaned.contains(" ")) return false
         val reservedUiWords = setOf(
-            "reels", "follow", "following", "message", "share", "like", "comment",
-            "remix", "audio", "more", "home", "search", "profile", "sponsored"
+            "reels", "reel", "explore", "follow", "following", "message", "share", "like", "comment",
+            "remix", "audio", "more", "home", "search", "profile", "sponsored", "suggested",
+            "foryou", "clips", "posts", "tagged", "saved", "Send", "send", "copy", "link"
         )
         if (cleaned.lowercase() in reservedUiWords) return false
         return cleaned.matches(Regex("""^[a-zA-Z0-9._]+$""")) && cleaned.any { it.isLetter() }
@@ -253,12 +254,15 @@ class InstaPinAccessibilityService : AccessibilityService() {
             val isShareViewId = viewId.contains("direct_share") ||
                 viewId.contains("clips_share") ||
                 viewId.contains("row_feed_button_share") ||
-                viewId.contains("share_button")
+                viewId.contains("share_button") ||
+                viewId.contains("send_button")
 
             val isShareDesc = desc == "share" ||
                 desc == "send post" ||
+                desc == "share reel" ||
                 desc.startsWith("share ") ||
-                desc.startsWith("send ")
+                desc.startsWith("send post") ||
+                desc.startsWith("send reel")
 
             if (isShareViewId || isShareDesc) {
                 shareCandidate = node
