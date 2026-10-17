@@ -227,6 +227,13 @@ class MainViewModel(
         }
     }
 
+    fun attachReelUrlToPin(pinId: Long, rawUrl: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = repository.updatePinExactReelUrl(pinId, rawUrl)
+            onResult(ok)
+        }
+    }
+
     fun approveAllPhase3Triage() {
         viewModelScope.launch(Dispatchers.IO) {
             repository.approveAllPhase3TriagePins()

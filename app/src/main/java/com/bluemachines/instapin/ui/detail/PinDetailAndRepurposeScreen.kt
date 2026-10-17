@@ -73,6 +73,7 @@ fun PinDetailAndRepurposeScreen(
     populatedPin: PopulatedVideoPin,
     onBack: () -> Unit,
     onTriggerPhase2Analysis: (Long) -> Unit,
+    onAttachClipboardLink: (String) -> Unit = {},
     onDeletePin: () -> Unit
 ) {
     val context = LocalContext.current
@@ -225,16 +226,37 @@ fun PinDetailAndRepurposeScreen(
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            text = if (hasExactReelLink) {
-                                "🔗 Exact Video Link: ${pin.instagramUrl}"
-                            } else {
-                                "⚠️ Legacy Pin (saved before v1.0.12 without Reel URL): ${pin.instagramUrl} — New pins automatically copy the exact Reel link!"
-                            },
-                            color = if (hasExactReelLink) Color(0xFF10B981) else Color(0xFFF59E0B),
-                            fontSize = 11.sp,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                        )
+                        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                            Text(
+                                text = if (hasExactReelLink) {
+                                    "🔗 Exact Video Link: ${pin.instagramUrl}"
+                                } else {
+                                    "⚠️ Channel-only link (${pin.instagramUrl}). Copy the Reel link in Instagram and tap below to attach the exact video:"
+                                },
+                                color = if (hasExactReelLink) Color(0xFF10B981) else Color(0xFFF59E0B),
+                                fontSize = 11.sp
+                            )
+                            if (!hasExactReelLink) {
+                                Spacer(Modifier.height(6.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        val clipText = cm.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                                        if (clipText.contains("instagram.com/", ignoreCase = true)) {
+                                            onAttachClipboardLink(clipText)
+                                            Toast.makeText(context, "Attached exact Reel link from Clipboard!", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, "Copy an Instagram Reel link first, then tap this button!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Paste Reel Video Link from Clipboard", fontSize = 11.sp)
+                                }
+                            }
+                        }
                     }
 
                     Spacer(Modifier.height(10.dp))

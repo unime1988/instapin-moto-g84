@@ -34,6 +34,7 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.bluemachines.instapin.InstaPinApp
 import com.bluemachines.instapin.MainActivity
 import com.bluemachines.instapin.R
+import com.bluemachines.instapin.ShareReceiverActivity
 import com.bluemachines.instapin.data.local.entity.Board
 import com.bluemachines.instapin.data.local.entity.CaptureSource
 import com.bluemachines.instapin.data.remote.InstagramMetadataExtractor
@@ -212,38 +213,40 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                             onSingleTapOpenSheet = {
                                 vibrateTick()
                                 lifecycleScope.launch {
-                                    // Step 1: While Instagram still has focus, click Share -> Copy Link via Accessibility
+                                    // Step 1: While Instagram holds focus, click Share -> Copy Link via Accessibility
                                     if (screenContext.isInstagramForeground) {
                                         InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
                                     }
-                                    // Step 2: Expand & make our overlay window FOCUSABLE first!
-                                    // On Android 10-14 (Moto G84 5G), ClipboardManager.primaryClip only returns the copied URL
-                                    // AFTER our overlay window holds input focus!
-                                    isQuickSheetExpanded = true
-                                    updateWindowMode(fullScreen = true, focusable = true)
-                                    delay(220)
-                                    lastAutoCapturedReelUrl = readInstagramUrlFromClipboard()
-                                    if (lastAutoCapturedReelUrl.isNullOrBlank()) {
-                                        delay(250)
-                                        lastAutoCapturedReelUrl = readInstagramUrlFromClipboard()
+                                    // Step 2: Launch ShareReceiverActivity (a true foreground Translucent Activity)
+                                    // Because Android 13/14 ONLY grants ClipboardManager read access to a foreground Activity
+                                    // inside onWindowFocusChanged(true), launching ShareReceiverActivity guarantees
+                                    // the copied Reel URL (https://www.instagram.com/reel/...) is read from the clipboard!
+                                    val actIntent = Intent(this@FloatingOverlayService, ShareReceiverActivity::class.java).apply {
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                                        putExtra(ShareReceiverActivity.EXTRA_FROM_FLOATING_PIN, true)
+                                        putExtra(ShareReceiverActivity.EXTRA_AUTHOR_HANDLE, screenContext.authorHandle)
+                                        putExtra(ShareReceiverActivity.EXTRA_CAPTION, screenContext.captionSnippet)
+                                        putExtra(ShareReceiverActivity.EXTRA_AUDIO_TRACK, screenContext.audioTrackName)
                                     }
+                                    startActivity(actIntent)
                                 }
                             },
                             onRadialBoardSelected = { selectedBoard: Board? ->
                                 vibrateTick()
-                                val clipboardUrl = readInstagramUrlFromClipboard()
-                                    ?: screenContext.detectedUrlFromScreen
-                                saveFromOverlay(
-                                    explicitUrl = clipboardUrl,
-                                    author = screenContext.authorHandle,
-                                    caption = screenContext.captionSnippet,
-                                    audioTrack = screenContext.audioTrackName,
-                                    boardIds = listOfNotNull(selectedBoard?.id),
-                                    moodIds = emptyList(),
-                                    notes = "",
-                                    captureSource = CaptureSource.LIVE_RADIAL_OVERLAY,
-                                    runPhase2 = selectedBoard?.autoAnalyzePhase2 ?: false
-                                )
+                                lifecycleScope.launch {
+                                    if (screenContext.isInstagramForeground) {
+                                        InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
+                                    }
+                                    val actIntent = Intent(this@FloatingOverlayService, ShareReceiverActivity::class.java).apply {
+                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                                        putExtra(ShareReceiverActivity.EXTRA_FROM_FLOATING_PIN, true)
+                                        putExtra(ShareReceiverActivity.EXTRA_PRESELECTED_BOARD_ID, selectedBoard?.id ?: 0L)
+                                        putExtra(ShareReceiverActivity.EXTRA_AUTHOR_HANDLE, screenContext.authorHandle)
+                                        putExtra(ShareReceiverActivity.EXTRA_CAPTION, screenContext.captionSnippet)
+                                        putExtra(ShareReceiverActivity.EXTRA_AUDIO_TRACK, screenContext.audioTrackName)
+                                    }
+                                    startActivity(actIntent)
+                                }
                             },
                             onStopHoverService = {
                                 manuallyPausedByUser = true

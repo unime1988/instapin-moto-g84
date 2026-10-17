@@ -453,6 +453,19 @@ class PinRepository(
         pinDao.deletePin(pin)
     }
 
+    suspend fun updatePinExactReelUrl(pinId: Long, rawClipboardOrUrl: String): Boolean {
+        val cleanUrl = InstagramMetadataExtractor.extractFirstInstagramUrl(rawClipboardOrUrl) ?: return false
+        val shortcode = InstagramMetadataExtractor.extractShortcode(cleanUrl)
+        val existing = pinDao.getPopulatedPinById(pinId)?.pin ?: return false
+        pinDao.updatePin(
+            existing.copy(
+                instagramUrl = cleanUrl,
+                shortcode = shortcode
+            )
+        )
+        return true
+    }
+
     suspend fun approveAllPhase3TriagePins() {
         pinDao.markAllPhase3PinsApproved()
     }

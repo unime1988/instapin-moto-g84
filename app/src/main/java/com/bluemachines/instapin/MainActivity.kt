@@ -131,6 +131,9 @@ class MainActivity : ComponentActivity() {
                         onTriggerPhase2Analysis = { pinId ->
                             viewModel.triggerPhase2Analysis(pinId)
                         },
+                        onAttachClipboardLink = { rawUrl ->
+                            viewModel.attachReelUrlToPin(activeDetailPin.pin.id, rawUrl) {}
+                        },
                         onDeletePin = {
                             viewModel.deletePin(activeDetailPin.pin)
                             selectedPinIdForDetail = null

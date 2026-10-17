@@ -1,6 +1,10 @@
 package com.bluemachines.instapin.service
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.graphics.Path
+import android.graphics.Rect
+import android.os.Build
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -24,8 +28,8 @@ data class LiveInstagramScreenContext(
  *    starts `FloatingOverlayService` if it isn't already running!
  * 2. Reads visible text nodes from the active Instagram Reel screen to extract `@author_handle`,
  *    the visible caption, and audio track without modifying anything in Instagram.
- * 3. Performs a 2-step automated "Share -> Copy link" accessibility click sequence so the
- *    exact Reel video URL (`https://www.instagram.com/reel/...`) is captured instead of just the creator profile!
+ * 3. Performs a multi-strategy automated "Share -> Copy link" accessibility click sequence so the
+ *    exact Reel video URL (`https://www.instagram.com/reel/...`) is copied onto the clipboard!
  */
 class InstaPinAccessibilityService : AccessibilityService() {
 
@@ -145,7 +149,10 @@ class InstaPinAccessibilityService : AccessibilityService() {
                 val reelByMatch = Regex("""(?:Reel by|Profile picture of|Photo by)\s+@?([A-Za-z0-9._]{2,30})""", RegexOption.IGNORE_CASE)
                     .find(desc)
                 if (reelByMatch != null && handleCandidate.isBlank()) {
-                    handleCandidate = reelByMatch.groupValues[1]
+                    val extractedHandle = reelByMatch.groupValues[1]
+                    if (isLikelyUsername(extractedHandle)) {
+                        handleCandidate = extractedHandle
+                    }
                 }
             }
 
@@ -190,7 +197,7 @@ class InstaPinAccessibilityService : AccessibilityService() {
         val reservedUiWords = setOf(
             "reels", "reel", "explore", "follow", "following", "message", "share", "like", "comment",
             "remix", "audio", "more", "home", "search", "profile", "sponsored", "suggested",
-            "foryou", "clips", "posts", "tagged", "saved", "Send", "send", "copy", "link"
+            "foryou", "clips", "posts", "tagged", "saved", "send", "copy", "link", "shop", "live"
         )
         if (cleaned.lowercase() in reservedUiWords) return false
         return cleaned.matches(Regex("""^[a-zA-Z0-9._]+$""")) && cleaned.any { it.isLetter() }
@@ -199,13 +206,14 @@ class InstaPinAccessibilityService : AccessibilityService() {
     /**
      * 2-Step Automated Reel Permalink Capture:
      * Step 1: If "Copy link" is already visible on screen, click it directly.
-     * Step 2: Otherwise, find Instagram's "Share" / "Send post" (paper-plane) button on the Reel,
-     *         click it, wait 450ms for the bottom share drawer to open, and click "Copy link"!
+     * Step 2: Otherwise, find Instagram's "Share" / "Send" (paper-plane) button on the Reel
+     *         (by View ID, ContentDescription, or right-edge action-column position),
+     *         click it, wait for the bottom share drawer to open, and click "Copy link"!
      */
     private suspend fun attemptFullShareAndCopyLinkSequence(): Boolean {
         // Step 1: Check if "Copy link" is already visible
         if (clickCopyLinkNodeIfVisible()) {
-            delay(220)
+            delay(280)
             return true
         }
 
@@ -213,11 +221,11 @@ class InstaPinAccessibilityService : AccessibilityService() {
         val clickedShare = clickInstagramShareButton()
         if (!clickedShare) return false
 
-        // Wait up to ~750ms (3 polls of 250ms) for Instagram's Share drawer with "Copy link" to appear
-        repeat(3) {
-            delay(260)
+        // Wait up to ~1.25 seconds (5 polls of 250ms) for Instagram's Share drawer with "Copy link" to appear
+        repeat(5) {
+            delay(250)
             if (clickCopyLinkNodeIfVisible()) {
-                delay(220)
+                delay(280)
                 return true
             }
         }
@@ -225,18 +233,53 @@ class InstaPinAccessibilityService : AccessibilityService() {
     }
 
     private fun clickCopyLinkNodeIfVisible(): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val copyLabels = listOf("Copy link", "Copy Link", "Copy")
-        for (label in copyLabels) {
-            val nodes = root.findAccessibilityNodeInfosByText(label)
-            val target = nodes?.firstOrNull { n ->
-                val txt = n.text?.toString().orEmpty()
-                val desc = n.contentDescription?.toString().orEmpty()
-                (txt.contains("Copy link", ignoreCase = true) || desc.contains("Copy link", ignoreCase = true)) &&
-                    (n.isClickable || n.parent?.isClickable == true || n.parent?.parent?.isClickable == true)
+        val allRoots = buildList {
+            rootInActiveWindow?.let { add(it) }
+            runCatching {
+                windows?.forEach { win ->
+                    win.root?.let { add(it) }
+                }
             }
-            if (target != null) {
-                return clickNodeOrClickableAncestor(target)
+        }.distinct()
+
+        val copyKeywords = listOf("copy link", "copylink", "link copy")
+
+        for (root in allRoots) {
+            // 1. Direct text search
+            val byTextNodes = root.findAccessibilityNodeInfosByText("Copy link")
+                ?: root.findAccessibilityNodeInfosByText("Copy")
+            val match = byTextNodes?.firstOrNull { n ->
+                val txt = n.text?.toString()?.lowercase().orEmpty()
+                val desc = n.contentDescription?.toString()?.lowercase().orEmpty()
+                val id = n.viewIdResourceName?.lowercase().orEmpty()
+                copyKeywords.any { kw -> txt.contains(kw) || desc.contains(kw) || id.contains("copy_link") }
+            }
+            if (match != null && clickNodeOrTapBounds(match)) {
+                return true
+            }
+
+            // 2. Full tree walk for contentDescription or viewId containing copy_link
+            var walkedMatch: AccessibilityNodeInfo? = null
+            fun searchCopy(node: AccessibilityNodeInfo?, depth: Int) {
+                if (node == null || depth > 26 || walkedMatch != null) return
+                val id = node.viewIdResourceName?.lowercase().orEmpty()
+                val txt = node.text?.toString()?.lowercase().orEmpty()
+                val desc = node.contentDescription?.toString()?.lowercase().orEmpty()
+
+                if (id.contains("copy_link") ||
+                    txt.contains("copy link") ||
+                    desc.contains("copy link")
+                ) {
+                    walkedMatch = node
+                    return
+                }
+                for (i in 0 until node.childCount) {
+                    searchCopy(node.getChild(i), depth + 1)
+                }
+            }
+            runCatching { searchCopy(root, 0) }
+            if (walkedMatch != null && clickNodeOrTapBounds(walkedMatch!!)) {
+                return true
             }
         }
         return false
@@ -245,28 +288,48 @@ class InstaPinAccessibilityService : AccessibilityService() {
     private fun clickInstagramShareButton(): Boolean {
         val root = rootInActiveWindow ?: return false
         var shareCandidate: AccessibilityNodeInfo? = null
+        val screenWidth = resources.displayMetrics.widthPixels
+        val screenHeight = resources.displayMetrics.heightPixels
+
+        val rightColumnButtonCandidates = mutableListOf<Pair<AccessibilityNodeInfo, Rect>>()
 
         fun searchShare(node: AccessibilityNodeInfo?, depth: Int) {
-            if (node == null || depth > 25 || shareCandidate != null) return
+            if (node == null || depth > 26 || shareCandidate != null) return
             val viewId = node.viewIdResourceName.orEmpty().lowercase()
             val desc = node.contentDescription?.toString()?.lowercase().orEmpty()
+            val text = node.text?.toString()?.lowercase().orEmpty()
 
             val isShareViewId = viewId.contains("direct_share") ||
                 viewId.contains("clips_share") ||
                 viewId.contains("row_feed_button_share") ||
                 viewId.contains("share_button") ||
-                viewId.contains("send_button")
+                viewId.contains("send_button") ||
+                viewId.contains("ufi_share")
 
-            val isShareDesc = desc == "share" ||
-                desc == "send post" ||
-                desc == "share reel" ||
-                desc.startsWith("share ") ||
-                desc.startsWith("send post") ||
-                desc.startsWith("send reel")
+            val isShareDesc = desc.contains("share") ||
+                desc.contains("send post") ||
+                desc.contains("send reel") ||
+                desc.contains("send to") ||
+                desc.contains("reshare") ||
+                text == "share" ||
+                text == "send"
 
             if (isShareViewId || isShareDesc) {
                 shareCandidate = node
                 return
+            }
+
+            // Also record clickable icons in Instagram Reels' right-hand vertical action column
+            // (x > 82% of screenWidth, y between 45% and 88% of screenHeight)
+            if (node.isClickable) {
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
+                if (rect.centerX() > (screenWidth * 0.82f) &&
+                    rect.centerY() in (screenHeight * 0.45f).toInt()..(screenHeight * 0.88f).toInt() &&
+                    rect.width() in 30..260
+                ) {
+                    rightColumnButtonCandidates.add(node to rect)
+                }
             }
 
             for (i in 0 until node.childCount) {
@@ -275,20 +338,51 @@ class InstaPinAccessibilityService : AccessibilityService() {
         }
 
         runCatching { searchShare(root, 0) }
-        return shareCandidate?.let { clickNodeOrClickableAncestor(it) } ?: false
+        if (shareCandidate != null) {
+            return clickNodeOrTapBounds(shareCandidate!!)
+        }
+
+        // Fallback: In Instagram Reels, the right-side action column is ordered top-to-bottom:
+        // [0] Like (Heart), [1] Comment, [2] Share/Send (Paper Plane), [3] More (...)
+        val sortedRightButtons = rightColumnButtonCandidates
+            .distinctBy { it.second.centerY() / 35 }
+            .sortedBy { it.second.centerY() }
+
+        if (sortedRightButtons.size >= 3) {
+            val paperPlaneNode = sortedRightButtons[2].first
+            return clickNodeOrTapBounds(paperPlaneNode)
+        }
+
+        return false
     }
 
-    private fun clickNodeOrClickableAncestor(node: AccessibilityNodeInfo): Boolean {
+    private fun clickNodeOrTapBounds(node: AccessibilityNodeInfo): Boolean {
         var current: AccessibilityNodeInfo? = node
         var hops = 0
-        while (current != null && hops < 4) {
-            if (current.isClickable) {
-                return current.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        while (current != null && hops < 5) {
+            if (current.isClickable && current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                return true
             }
             current = current.parent
             hops++
         }
-        return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            return true
+        }
+        // Fallback: dispatch physical tap gesture at the node's screen center coordinates
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+            if (!rect.isEmpty && rect.centerX() > 0 && rect.centerY() > 0) {
+                val path = Path().apply {
+                    moveTo(rect.centerX().toFloat(), rect.centerY().toFloat())
+                }
+                val stroke = GestureDescription.StrokeDescription(path, 0L, 45L)
+                val gesture = GestureDescription.Builder().addStroke(stroke).build()
+                return dispatchGesture(gesture, null, null)
+            }
+        }
+        return false
     }
 
     override fun onInterrupt() = Unit
