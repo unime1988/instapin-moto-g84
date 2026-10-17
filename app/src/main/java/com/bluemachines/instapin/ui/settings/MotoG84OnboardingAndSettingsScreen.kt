@@ -4,9 +4,11 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
-import androidx.compose.foundation.background
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,21 +22,28 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessibilityNew
+import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -59,31 +68,44 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bluemachines.instapin.BuildConfig
-import com.bluemachines.instapin.InstaPinApp
+import com.bluemachines.instapin.data.local.AiProviderType
+import com.bluemachines.instapin.data.local.AppThemePreset
+import com.bluemachines.instapin.data.local.FeedLayoutMode
+import com.bluemachines.instapin.data.local.FontScalePreset
 import com.bluemachines.instapin.data.local.UserSettings
+import com.bluemachines.instapin.data.remote.ApiConnectionTestResult
 import com.bluemachines.instapin.data.remote.AppUpdaterService
 import com.bluemachines.instapin.data.remote.GitHubReleaseInfo
 import com.bluemachines.instapin.service.FloatingOverlayService
 import com.bluemachines.instapin.service.InstaPinAccessibilityService
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MotoG84OnboardingAndSettingsScreen(
     settings: UserSettings,
-    onSaveApiKey: (String) -> Unit,
-    onSaveOverlayPrefs: (Boolean, Boolean, Boolean) -> Unit,
-    onSaveCreatorNiche: (String) -> Unit
+    aiTestResult: ApiConnectionTestResult? = null,
+    onSaveMultiProviderAi: (AiProviderType, String, String, Int, String, String) -> Unit = { _, _, _, _, _, _ -> },
+    onTestAiConnection: (AiProviderType, String, String, Int, String, String) -> Unit = { _, _, _, _, _, _ -> },
+    onSaveVisualAppearance: (AppThemePreset, FeedLayoutMode, FontScalePreset) -> Unit = { _, _, _ -> },
+    onExportBackup: ((String) -> Unit) -> Unit = {},
+    onRestoreBackup: ((String) -> Unit) -> Unit = {},
+    onSaveOverlayPrefs: (Boolean, Boolean, Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val hasOverlayPermission = Settings.canDrawOverlays(context)
     val accessibilityConnected by InstaPinAccessibilityService.isServiceConnected.collectAsState()
 
+    var selectedProvider by remember(settings.aiProvider) { mutableStateOf(settings.aiProvider) }
     var apiKeyInput by remember(settings.geminiApiKey) { mutableStateOf(settings.geminiApiKey) }
+    var modelInput by remember(settings.geminiModel) { mutableStateOf(settings.geminiModel) }
+    var scriptDurationSec by remember(settings.scriptDurationSeconds) { mutableIntStateOf(settings.scriptDurationSeconds) }
+    var scriptToneInput by remember(settings.scriptToneAndLanguage) { mutableStateOf(settings.scriptToneAndLanguage) }
     var nicheInput by remember(settings.creatorNicheDescription) { mutableStateOf(settings.creatorNicheDescription) }
     var overlayRunning by remember { mutableStateOf(FloatingOverlayService.isRunning) }
 
-    // 1-Tap In-App GitHub Updater & Changelog states
+    // 1-Tap In-App GitHub Updater & Time Machine Rollback states
     val currentVersionLabel = "v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})"
     var latestRelease by remember { mutableStateOf<GitHubReleaseInfo?>(null) }
     var updateStatusText by remember {
@@ -92,9 +114,11 @@ fun MotoG84OnboardingAndSettingsScreen(
     var isDownloadingUpdate by remember { mutableStateOf(false) }
     var downloadProgress by remember { mutableIntStateOf(0) }
     var showFullReleaseHistory by remember { mutableStateOf(false) }
+    var backupStatusMessage by remember { mutableStateOf("") }
+    var hasLocalRollbackApk by remember { mutableStateOf(AppUpdaterService.hasLocalRollbackApk(context)) }
 
-    // Automatically check GitHub Releases when opening Moto G84 Setup tab
     LaunchedEffect(Unit) {
+        hasLocalRollbackApk = AppUpdaterService.hasLocalRollbackApk(context)
         AppUpdaterService.checkLatestRelease()
             .onSuccess { info ->
                 latestRelease = info
@@ -105,7 +129,7 @@ fun MotoG84OnboardingAndSettingsScreen(
                 }
             }
             .onFailure {
-                updateStatusText = "Ready for 1-Tap GitHub Update"
+                updateStatusText = "Ready for 1-Tap GitHub Update or Time-Machine Rollback"
             }
     }
 
@@ -116,10 +140,10 @@ fun MotoG84OnboardingAndSettingsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 1-Tap GitHub Actions Over-The-Air Updater + Version Tracker & Changelog Card
+        // 1. 1-Tap GitHub Updater + Version Rollback Time Machine Card
         Card(
             shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF181826)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(18.dp)) {
@@ -133,14 +157,14 @@ fun MotoG84OnboardingAndSettingsScreen(
                     Spacer(Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = "1-Tap In-App GitHub Updater",
-                            color = Color.White,
+                            text = "1-Tap Updater & Version Time Machine",
+                            color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp
                         )
                         Text(
                             text = updateStatusText,
-                            color = if (latestRelease?.isNewerThanCurrent == true) Color(0xFF10B981) else Color(0xFFA0A0B8),
+                            color = if (latestRelease?.isNewerThanCurrent == true) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium
                         )
@@ -151,7 +175,7 @@ fun MotoG84OnboardingAndSettingsScreen(
 
                 // Version Comparison Grid: Previous -> Current -> Latest GitHub
                 Surface(
-                    color = Color(0xFF12121C),
+                    color = MaterialTheme.colorScheme.background,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -162,12 +186,12 @@ fun MotoG84OnboardingAndSettingsScreen(
                         VersionRowItem(
                             label = "Previous App Version:",
                             value = settings.previousInstalledVersion,
-                            valueColor = Color(0xFFA0A0B8)
+                            valueColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
                         )
                         VersionRowItem(
                             label = "Current Installed Version:",
                             value = currentVersionLabel,
-                            valueColor = Color.White
+                            valueColor = MaterialTheme.colorScheme.onSurface
                         )
                         VersionRowItem(
                             label = "Latest GitHub Release:",
@@ -179,9 +203,9 @@ fun MotoG84OnboardingAndSettingsScreen(
 
                 Spacer(Modifier.height(10.dp))
 
-                // What's New Changelog Box
+                // What's New Changelog Box + Time Machine Version Picker
                 Surface(
-                    color = Color(0xFF141422),
+                    color = MaterialTheme.colorScheme.background,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -192,7 +216,7 @@ fun MotoG84OnboardingAndSettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "📋 What's New / Changelog (${latestRelease?.tagName ?: "v${BuildConfig.VERSION_NAME}"})",
+                                text = "📋 Changelog (${latestRelease?.tagName ?: "v${BuildConfig.VERSION_NAME}"})",
                                 color = Color(0xFF10B981),
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp
@@ -208,9 +232,10 @@ fun MotoG84OnboardingAndSettingsScreen(
                                 )
                                 Spacer(Modifier.width(4.dp))
                                 Text(
-                                    text = if (showFullReleaseHistory) "Hide History" else "All Versions",
+                                    text = if (showFullReleaseHistory) "Hide Time Machine" else "All Versions / Rollback",
                                     color = Color(0xFFA78BFA),
-                                    fontSize = 11.sp
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         }
@@ -220,31 +245,82 @@ fun MotoG84OnboardingAndSettingsScreen(
 
                         Text(
                             text = activeChangelog,
-                            color = Color(0xFFE2E2F0),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f),
                             fontSize = 12.sp,
                             lineHeight = 17.sp
                         )
 
                         if (showFullReleaseHistory) {
                             Spacer(Modifier.height(8.dp))
-                            HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+                            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
                             Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = "⏳ Time Machine: Tap 'Restore' on any past release to roll back in-place:",
+                                color = Color(0xFFF59E0B),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(Modifier.height(6.dp))
                             val historyList = latestRelease?.recentReleasesHistory?.ifEmpty { null }
                                 ?: AppUpdaterService.builtInChangelogHistory
                             historyList.forEach { entry ->
-                                Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                                    Text(
-                                        text = "${entry.versionTag} — ${entry.title}",
-                                        color = Color.White,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 12.sp
-                                    )
-                                    Text(
-                                        text = entry.changelogNotes,
-                                        color = Color(0xFFA0A0B8),
-                                        fontSize = 11.sp,
-                                        lineHeight = 16.sp
-                                    )
+                                Card(
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "${entry.versionTag} — ${entry.title}",
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            if (entry.apkDownloadUrl.isNotBlank()) {
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        coroutineScope.launch {
+                                                            isDownloadingUpdate = true
+                                                            downloadProgress = 0
+                                                            updateStatusText = "Restoring ${entry.versionTag}..."
+                                                            AppUpdaterService.downloadAndTriggerInstall(
+                                                                context = context,
+                                                                apkUrl = entry.apkDownloadUrl,
+                                                                snapshotBeforeInstall = false,
+                                                                onProgressPercent = { pct -> downloadProgress = pct }
+                                                            ).onSuccess {
+                                                                isDownloadingUpdate = false
+                                                                updateStatusText = "Ready! Confirm install for ${entry.versionTag}."
+                                                            }.onFailure { err ->
+                                                                isDownloadingUpdate = false
+                                                                updateStatusText = "Restore failed: ${err.message}"
+                                                            }
+                                                        }
+                                                    },
+                                                    shape = RoundedCornerShape(8.dp)
+                                                ) {
+                                                    Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(14.dp))
+                                                    Spacer(Modifier.width(4.dp))
+                                                    Text("Restore", fontSize = 11.sp)
+                                                }
+                                            }
+                                        }
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            text = entry.changelogNotes,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                                            fontSize = 11.sp,
+                                            lineHeight = 15.sp
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -261,16 +337,17 @@ fun MotoG84OnboardingAndSettingsScreen(
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "Downloading latest GitHub Actions APK... $downloadProgress%",
+                        text = "Downloading APK package... $downloadProgress%",
                         color = Color(0xFF10B981),
                         fontSize = 12.sp
                     )
                     Spacer(Modifier.height(8.dp))
                 }
 
+                // Primary Update & Check Buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     OutlinedButton(
                         onClick = {
@@ -282,7 +359,7 @@ fun MotoG84OnboardingAndSettingsScreen(
                                         updateStatusText = if (info.isNewerThanCurrent) {
                                             "New update available: ${info.tagName}"
                                         } else {
-                                            "Up to date: ${info.tagName} (Installed: v${BuildConfig.VERSION_NAME})"
+                                            "Up to date: ${info.tagName}"
                                         }
                                     }
                                     .onFailure { err ->
@@ -302,16 +379,17 @@ fun MotoG84OnboardingAndSettingsScreen(
                             coroutineScope.launch {
                                 isDownloadingUpdate = true
                                 downloadProgress = 0
-                                (context.applicationContext as? InstaPinApp)?.preferences?.recordVersionBeforeUpdate()
                                 val targetUrl = latestRelease?.apkDownloadUrl
                                     ?: "https://github.com/unime1988/instapin-moto-g84/releases/latest/download/InstaPin-MotoG84.apk"
                                 AppUpdaterService.downloadAndTriggerInstall(
                                     context = context,
                                     apkUrl = targetUrl,
+                                    snapshotBeforeInstall = true,
                                     onProgressPercent = { pct -> downloadProgress = pct }
                                 ).onSuccess {
                                     isDownloadingUpdate = false
-                                    updateStatusText = "Downloaded! Confirm 'Update' in Android prompt."
+                                    hasLocalRollbackApk = AppUpdaterService.hasLocalRollbackApk(context)
+                                    updateStatusText = "Backed up current APK & DB! Confirm 'Update' in prompt."
                                 }.onFailure { err ->
                                     isDownloadingUpdate = false
                                     updateStatusText = err.message ?: "Update failed"
@@ -324,35 +402,355 @@ fun MotoG84OnboardingAndSettingsScreen(
                     ) {
                         Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Download & Update", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("Download & Update", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                // 1-Tap Instant Local Rollback + JSON Data Snapshot Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            coroutineScope.launch {
+                                AppUpdaterService.triggerLocalRollbackInstall(context)
+                                    .onSuccess {
+                                        updateStatusText = "Launching cached Previous Working APK installer..."
+                                    }
+                                    .onFailure {
+                                        showFullReleaseHistory = true
+                                        updateStatusText = it.message ?: "Select a version from Time Machine above"
+                                    }
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Restore, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = if (hasLocalRollbackApk) "Revert to Previous APK" else "Version Time Machine",
+                            fontSize = 11.sp
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            onExportBackup { msg ->
+                                backupStatusMessage = msg
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Backup, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Backup DB", fontSize = 11.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            onRestoreBackup { msg ->
+                                backupStatusMessage = msg
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Restore DB", fontSize = 11.sp)
+                    }
+                }
+
+                if (backupStatusMessage.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = backupStatusMessage,
+                        color = Color(0xFF10B981),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+
+        // 2. Live UI Theme, Layout & Text Formatting Switcher Card
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Palette, contentDescription = null, tint = Color(0xFFE60023))
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "Live UI Theme, Layout & Text Formatting",
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        Text(
+                            text = "Switch colors, Pinterest Masonry vs List layout, and text size instantly without rebuilding",
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                Text("Color Theme Preset:", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AppThemePreset.entries.forEach { preset ->
+                        FilterChip(
+                            selected = settings.themePreset == preset,
+                            onClick = {
+                                onSaveVisualAppearance(preset, settings.feedLayoutMode, settings.fontScalePreset)
+                            },
+                            label = { Text(preset.displayName, fontSize = 11.sp) }
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                Text("Feed Layout Style:", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FeedLayoutMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = settings.feedLayoutMode == mode,
+                            onClick = {
+                                onSaveVisualAppearance(settings.themePreset, mode, settings.fontScalePreset)
+                            },
+                            label = { Text(mode.displayName, fontSize = 11.sp) }
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                Text("Text Size & Formatting Scale:", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FontScalePreset.entries.forEach { scale ->
+                        FilterChip(
+                            selected = settings.fontScalePreset == scale,
+                            onClick = {
+                                onSaveVisualAppearance(settings.themePreset, settings.feedLayoutMode, scale)
+                            },
+                            label = { Text(scale.displayName, fontSize = 11.sp) }
+                        )
                     }
                 }
             }
         }
 
-        // Moto G84 5G Hover Setup Card
+        // 3. Multi-Provider Bring-Your-Own-Key (BYOK) & Android Keystore Encryption Card
         Card(
             shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF181826)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Security, contentDescription = null, tint = Color(0xFF8B5CF6))
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "Multi-Provider BYOK AI & Keystore Security",
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        Text(
+                            text = "AES-256-GCM hardware-encrypted in Android Keystore • Header-only auth",
+                            color = Color(0xFF10B981),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                Text(
+                    text = "Select AI Provider:",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(4.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AiProviderType.entries.forEach { provider ->
+                        val isSelected = selectedProvider == provider
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                selectedProvider = provider
+                                modelInput = provider.defaultModel
+                            },
+                            label = { Text(provider.displayName, fontSize = 11.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Color(0xFF8B5CF6),
+                                selectedLabelColor = Color.White
+                            )
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = apiKeyInput,
+                    onValueChange = { apiKeyInput = it },
+                    label = { Text("${selectedProvider.displayName} API Key (${selectedProvider.keyPlaceholder})") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = modelInput,
+                    onValueChange = { modelInput = it },
+                    label = { Text("Model Name (default: ${selectedProvider.defaultModel})") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                // Script Duration & Tone Controls for Phase 2 Repurposing
+                Text(
+                    text = "Phase 2 Recreate Script Target Duration:",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(30, 45, 60).forEach { sec ->
+                        FilterChip(
+                            selected = scriptDurationSec == sec,
+                            onClick = { scriptDurationSec = sec },
+                            label = { Text("${sec}s Reel") }
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(6.dp))
+
+                OutlinedTextField(
+                    value = scriptToneInput,
+                    onValueChange = { scriptToneInput = it },
+                    label = { Text("Script Tone & Language (e.g., English, Hinglish, Storytelling)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = nicheInput,
+                    onValueChange = { nicheInput = it },
+                    label = { Text("Your Creator Positioning / Niche") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (aiTestResult != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Surface(
+                        color = if (aiTestResult.isSuccess) Color(0xFF10B981).copy(alpha = 0.16f) else Color(0xFFEF4444).copy(alpha = 0.16f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = aiTestResult.message,
+                            color = if (aiTestResult.isSuccess) Color(0xFF10B981) else Color(0xFFEF4444),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            onTestAiConnection(
+                                selectedProvider,
+                                apiKeyInput,
+                                modelInput,
+                                scriptDurationSec,
+                                scriptToneInput,
+                                nicheInput
+                            )
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Test Key", fontSize = 12.sp)
+                    }
+
+                    Button(
+                        onClick = {
+                            onSaveMultiProviderAi(
+                                selectedProvider,
+                                apiKeyInput,
+                                modelInput,
+                                scriptDurationSec,
+                                scriptToneInput,
+                                nicheInput
+                            )
+                            Toast.makeText(
+                                context,
+                                "Saved & Encrypted ${selectedProvider.displayName} settings in Android Keystore!",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1.3f)
+                    ) {
+                        Text("Save Encrypted Key", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
+                    }
+                }
+            }
+        }
+
+        // 4. Moto G84 5G Hover & Accessibility Setup Card
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(18.dp)) {
                 Text(
                     text = "Moto G84 5G Hover & Accessibility Setup",
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.Bold,
                     fontSize = 17.sp
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = "Enable these two Android permissions so the Pinterest radial button hovers over Instagram and reads @author & caption automatically.",
-                    color = Color(0xFFA0A0B8),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                     fontSize = 12.sp
                 )
 
                 Spacer(Modifier.height(14.dp))
 
-                // Step 1: Display Over Other Apps
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -369,13 +767,13 @@ fun MotoG84OnboardingAndSettingsScreen(
                         Column {
                             Text(
                                 text = "1. Display Over Other Apps",
-                                color = Color.White,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 14.sp
                             )
                             Text(
                                 text = if (hasOverlayPermission) "Granted • Ready to hover" else "Required for floating Pinterest bubble",
-                                color = Color(0xFFA0A0B8),
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                                 fontSize = 11.sp
                             )
                         }
@@ -390,7 +788,6 @@ fun MotoG84OnboardingAndSettingsScreen(
 
                 Spacer(Modifier.height(12.dp))
 
-                // Step 2: Accessibility Service
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -407,7 +804,7 @@ fun MotoG84OnboardingAndSettingsScreen(
                         Column {
                             Text(
                                 text = "2. InstaPin Context Reader",
-                                color = Color.White,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 14.sp
                             )
@@ -417,7 +814,7 @@ fun MotoG84OnboardingAndSettingsScreen(
                                 } else {
                                     "If greyed out on Moto G84: Settings -> Apps -> InstaPin -> ⋮ -> Allow restricted settings"
                                 },
-                                color = Color(0xFFA0A0B8),
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                                 fontSize = 11.sp
                             )
                         }
@@ -438,7 +835,6 @@ fun MotoG84OnboardingAndSettingsScreen(
 
                 Spacer(Modifier.height(16.dp))
 
-                // Start / Stop Hover Service Button
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -456,9 +852,9 @@ fun MotoG84OnboardingAndSettingsScreen(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null)
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
                         Spacer(Modifier.width(6.dp))
-                        Text("Start Hover Bubble", fontWeight = FontWeight.Bold)
+                        Text("Start Hover Bubble", fontWeight = FontWeight.Bold, color = Color.White)
                     }
 
                     OutlinedButton(
@@ -476,16 +872,16 @@ fun MotoG84OnboardingAndSettingsScreen(
             }
         }
 
-        // Hover Behavior Preferences
+        // 5. Hover Behavior Preferences
         Card(
             shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF181826)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(18.dp)) {
                 Text(
                     text = "Hover & Auto-Analysis Preferences",
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp
                 )
@@ -519,66 +915,6 @@ fun MotoG84OnboardingAndSettingsScreen(
                 )
             }
         }
-
-        // Google Gemini API Configuration (Phase 1, 2 & 3)
-        Card(
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF181826)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(18.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Key, contentDescription = null, tint = Color(0xFF8B5CF6))
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "Google Gemini AI Configuration",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = "Powers Phase 1 Domain/Subject categorization, Phase 2 Deep Video Breakdown & Recreate Scripts, and Phase 3 Bulk Historical Sorting. Works offline with smart local rules if left blank.",
-                    color = Color(0xFFA0A0B8),
-                    fontSize = 12.sp
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                OutlinedTextField(
-                    value = apiKeyInput,
-                    onValueChange = { apiKeyInput = it },
-                    label = { Text("Gemini API Key (AIza...)") },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(Modifier.height(10.dp))
-
-                OutlinedTextField(
-                    value = nicheInput,
-                    onValueChange = { nicheInput = it },
-                    label = { Text("Your Creator Style / Niche (for Phase 2 Script Rewriting)") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                Button(
-                    onClick = {
-                        onSaveApiKey(apiKeyInput)
-                        onSaveCreatorNiche(nicheInput)
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Save AI Settings", fontWeight = FontWeight.Bold)
-                }
-            }
-        }
     }
 }
 
@@ -595,7 +931,7 @@ private fun VersionRowItem(
     ) {
         Text(
             text = label,
-            color = Color(0xFFA0A0B8),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
             fontSize = 12.sp
         )
         Text(
@@ -622,8 +958,8 @@ private fun SettingToggleRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-            Text(text = subtitle, color = Color(0xFFA0A0B8), fontSize = 11.sp)
+            Text(text = title, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text(text = subtitle, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), fontSize = 11.sp)
         }
         Spacer(Modifier.width(8.dp))
         Switch(checked = checked, onCheckedChange = onCheckedChange)

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <!-- Exclude Keystore-encrypted DataStore prefs from cloud/device transfer (MASVS-STORAGE) -->
+    <cloud-backup>
+        <include domain="database" path="." />
+        <exclude domain="file" path="datastore/" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="database" path="." />
+        <exclude domain="file" path="datastore/" />
+    </device-transfer>
+</data-extraction-rules>

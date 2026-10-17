@@ -14,8 +14,10 @@ android {
         applicationId = "com.bluemachines.instapin"
         minSdk = 29 // Android 10+; Moto G84 5G runs Android 13/14 (API 33/34)
         targetSdk = 34
-        versionCode = (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1) + 1
-        versionName = "1.0.${System.getenv("GITHUB_RUN_NUMBER") ?: "1"}"
+        // Fixed versionCode = 100 across all builds allows Android PackageInstaller to perform
+        // 1-Tap in-place rollbacks/downgrades AND upgrades without uninstalling!
+        versionCode = 100
+        versionName = "1.0.${System.getenv("GITHUB_RUN_NUMBER") ?: "9"}"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

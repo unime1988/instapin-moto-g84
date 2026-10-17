@@ -71,7 +71,6 @@ abstract class AppDatabase : RoomDatabase() {
                             }
                         }
                     })
-                    .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
                 CoroutineScope(Dispatchers.IO).launch {

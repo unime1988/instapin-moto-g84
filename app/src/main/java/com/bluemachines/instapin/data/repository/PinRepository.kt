@@ -1,5 +1,7 @@
 package com.bluemachines.instapin.data.repository
 
+import android.content.Context
+import com.bluemachines.instapin.BuildConfig
 import com.bluemachines.instapin.data.local.AppDatabase
 import com.bluemachines.instapin.data.local.AppPreferences
 import com.bluemachines.instapin.data.local.entity.AuthorSummary
@@ -14,10 +16,32 @@ import com.bluemachines.instapin.data.local.entity.PinMoodCrossRef
 import com.bluemachines.instapin.data.local.entity.PopulatedVideoPin
 import com.bluemachines.instapin.data.local.entity.VideoAnalysis
 import com.bluemachines.instapin.data.local.entity.VideoPin
+import com.bluemachines.instapin.data.remote.ApiConnectionTestResult
 import com.bluemachines.instapin.data.remote.GeminiAiService
 import com.bluemachines.instapin.data.remote.InstagramExportJsonParser
 import com.bluemachines.instapin.data.remote.InstagramMetadataExtractor
 import kotlinx.coroutines.flow.Flow
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.io.File
+
+@Serializable
+data class BackupPinItem(
+    val pin: VideoPin,
+    val boardNames: List<String> = emptyList(),
+    val moodNames: List<String> = emptyList(),
+    val analysis: VideoAnalysis? = null
+)
+
+@Serializable
+data class FullDatabaseSnapshot(
+    val exportedAtMillis: Long = System.currentTimeMillis(),
+    val appVersion: String = BuildConfig.VERSION_NAME,
+    val boards: List<Board> = emptyList(),
+    val moods: List<MoodTag> = emptyList(),
+    val pins: List<BackupPinItem> = emptyList()
+)
 
 class PinRepository(
     private val database: AppDatabase,
@@ -29,6 +53,12 @@ class PinRepository(
     private val boardDao = database.boardDao()
     private val analysisDao = database.analysisDao()
     private val importDao = database.importDao()
+
+    private val snapshotJson = Json {
+        ignoreUnknownKeys = true
+        prettyPrint = true
+        encodeDefaults = true
+    }
 
     val allPinsFlow: Flow<List<PopulatedVideoPin>> = pinDao.observeAllPopulatedPins()
     val phase3TriagePinsFlow: Flow<List<PopulatedVideoPin>> = pinDao.observePhase3TriagePins()
@@ -42,10 +72,19 @@ class PinRepository(
 
     fun observePinById(pinId: Long): Flow<PopulatedVideoPin?> = pinDao.observePopulatedPinById(pinId)
 
+    suspend fun testActiveAiConnection(): ApiConnectionTestResult {
+        val settings = preferences.getSettings()
+        return geminiAiService.testApiConnection(
+            provider = settings.aiProvider,
+            apiKey = settings.geminiApiKey,
+            model = settings.geminiModel
+        )
+    }
+
     /**
      * Phase 1 Core Save Pipeline:
      * 1. Normalizes Instagram URL & enriches with OpenGraph metadata (without downloading video).
-     * 2. Classifies Domain, Subject, Boards, and Moods via Gemini Flash (or instant local heuristic).
+     * 2. Classifies Domain, Subject, Boards, and Moods via selected BYOK AI Provider (or instant local heuristic).
      * 3. Stores the VideoPin instance and links it to 1 or multiple Boards and Moods.
      */
     suspend fun saveOrUpdateInstagramPin(
@@ -77,7 +116,8 @@ class PinRepository(
             caption = extracted.caption,
             audioTrack = extracted.audioTrackName,
             availableBoardNames = allBoards.map { it.name },
-            availableMoodNames = allMoods.map { it.name }
+            availableMoodNames = allMoods.map { it.name },
+            provider = settings.aiProvider
         )
 
         val existingPin = pinDao.getPinByShortcode(extracted.shortcode)
@@ -118,7 +158,6 @@ class PinRepository(
 
         val pinId = pinDao.insertPin(pinToSave)
 
-        // Resolve Board assignments (explicitly chosen boards OR AI-matched boards)
         val targetBoardIds = if (explicitBoardIds.isNotEmpty()) {
             explicitBoardIds
         } else {
@@ -132,7 +171,6 @@ class PinRepository(
             pinDao.insertPinBoardCrossRef(PinBoardCrossRef(pinId = pinId, boardId = boardId))
         }
 
-        // Resolve Mood assignments
         val targetMoodIds = if (explicitMoodIds.isNotEmpty()) {
             explicitMoodIds
         } else {
@@ -145,7 +183,6 @@ class PinRepository(
             pinDao.insertPinMoodCrossRef(PinMoodCrossRef(pinId = pinId, moodId = moodId))
         }
 
-        // Check if Phase 2 Deep Analysis should run automatically
         val boardRequiresAutoPhase2 = allBoards.any { it.id in targetBoardIds && it.autoAnalyzePhase2 }
         if (runPhase2Immediately || settings.autoAnalyzePhase2OnSave || boardRequiresAutoPhase2) {
             runCatching {
@@ -166,7 +203,10 @@ class PinRepository(
             apiKey = settings.geminiApiKey,
             model = settings.geminiModel,
             pin = populated.pin,
-            creatorNiche = settings.creatorNicheDescription
+            creatorNiche = settings.creatorNicheDescription,
+            provider = settings.aiProvider,
+            scriptDurationSec = settings.scriptDurationSeconds,
+            scriptTone = settings.scriptToneAndLanguage
         )
         analysisDao.insertOrUpdateAnalysis(analysis)
         pinDao.updatePin(populated.pin.copy(isAnalyzedPhase2 = true))
@@ -174,8 +214,7 @@ class PinRepository(
     }
 
     /**
-     * Phase 3: Imports historical Instagram `liked_posts.json` / `saved_posts.json` export,
-     * deduplicates against existing pins, enriches metadata, and auto-categorizes into Boards & Domains.
+     * Phase 3: Imports historical Instagram `liked_posts.json` / `saved_posts.json` export.
      */
     suspend fun importHistoricalInstagramJson(
         fileName: String,
@@ -226,7 +265,8 @@ class PinRepository(
                         caption = effectiveCaption,
                         audioTrack = "",
                         availableBoardNames = allBoards.map { it.name },
-                        availableMoodNames = allMoods.map { it.name }
+                        availableMoodNames = allMoods.map { it.name },
+                        provider = settings.aiProvider
                     )
                 } else {
                     geminiAiService.heuristicClassify(
@@ -282,6 +322,72 @@ class PinRepository(
         )
         importDao.updateBatch(finishedBatch)
         return finishedBatch
+    }
+
+    /**
+     * Exports a complete JSON snapshot of all Boards, Moods, Pins, and Phase 2 Analyses
+     * to `filesDir/backups/InstaPin-AutoBackup.json` so data is always safe across updates/rollbacks.
+     */
+    suspend fun exportFullBackupSnapshotToFile(context: Context): File {
+        val boards = boardDao.getAllBoards()
+        val moods = boardDao.getAllMoodTags()
+        val populatedPins = pinDao.getAllPopulatedPins()
+
+        val snapshot = FullDatabaseSnapshot(
+            exportedAtMillis = System.currentTimeMillis(),
+            appVersion = BuildConfig.VERSION_NAME,
+            boards = boards,
+            moods = moods,
+            pins = populatedPins.map { item ->
+                BackupPinItem(
+                    pin = item.pin,
+                    boardNames = item.boards.map { it.name },
+                    moodNames = item.moods.map { it.name },
+                    analysis = item.analysis
+                )
+            }
+        )
+
+        val backupDir = File(context.filesDir, "backups").apply { mkdirs() }
+        val backupFile = File(backupDir, "InstaPin-AutoBackup.json")
+        backupFile.writeText(snapshotJson.encodeToString(snapshot))
+        return backupFile
+    }
+
+    /**
+     * Restores Boards, Moods, Pins, and Phase 2 Analyses from `filesDir/backups/InstaPin-AutoBackup.json`.
+     */
+    suspend fun restoreFullBackupSnapshotFromFile(context: Context): Int {
+        val backupFile = File(File(context.filesDir, "backups"), "InstaPin-AutoBackup.json")
+        if (!backupFile.exists()) return 0
+
+        val snapshot = snapshotJson.decodeFromString<FullDatabaseSnapshot>(backupFile.readText())
+        snapshot.boards.forEach { boardDao.insertBoard(it.copy(id = 0)) }
+        snapshot.moods.forEach { boardDao.insertMoodTag(it.copy(id = 0)) }
+
+        val allBoards = boardDao.getAllBoards()
+        val allMoods = boardDao.getAllMoodTags()
+        var restoredCount = 0
+
+        snapshot.pins.forEach { item ->
+            val existing = pinDao.getPinByShortcode(item.pin.shortcode)
+            val pinId = existing?.id ?: pinDao.insertPin(item.pin.copy(id = 0))
+            item.boardNames.forEach { bName ->
+                allBoards.firstOrNull { it.name.equals(bName, ignoreCase = true) }?.let { b ->
+                    pinDao.insertPinBoardCrossRef(PinBoardCrossRef(pinId = pinId, boardId = b.id))
+                }
+            }
+            item.moodNames.forEach { mName ->
+                allMoods.firstOrNull { it.name.equals(mName, ignoreCase = true) }?.let { m ->
+                    pinDao.insertPinMoodCrossRef(PinMoodCrossRef(pinId = pinId, moodId = m.id))
+                }
+            }
+            item.analysis?.let { analysis ->
+                analysisDao.insertOrUpdateAnalysis(analysis.copy(id = 0, pinId = pinId))
+            }
+            restoredCount++
+        }
+        return restoredCount
     }
 
     suspend fun createBoard(

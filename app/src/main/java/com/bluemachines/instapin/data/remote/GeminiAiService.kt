@@ -1,5 +1,6 @@
 package com.bluemachines.instapin.data.remote
 
+import com.bluemachines.instapin.data.local.AiProviderType
 import com.bluemachines.instapin.data.local.entity.VideoAnalysis
 import com.bluemachines.instapin.data.local.entity.VideoPin
 import kotlinx.coroutines.Dispatchers
@@ -7,7 +8,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -44,11 +44,19 @@ data class Phase2DeepAnalysisDto(
     val shotListAndEditChecklist: List<String> = emptyList()
 )
 
+data class ApiConnectionTestResult(
+    val isSuccess: Boolean,
+    val providerName: String,
+    val modelName: String,
+    val latencyMs: Long,
+    val message: String
+)
+
 /**
- * Handles both:
- * - Phase 1: Fast Domain/Subject/Board/Mood categorization (with instant deterministic keyword fallback if offline/no key)
- * - Phase 2: Deep Video Analysis, Transcript/Hook/Structure Breakdown, and Repurpose/Recreate Script Studio via Google Gemini API.
- * - Phase 3: Batch categorization of historical Instagram liked/saved posts.
+ * Multi-Provider Bring-Your-Own-Key (BYOK) AI Engine (`MASVS-NETWORK` compliant):
+ * - Supports Google Gemini (`x-goog-api-key` header — never leaks key in URL query string!),
+ *   OpenAI (`gpt-4o-mini` / `gpt-4o`), Groq (`llama-3.3-70b-versatile`), and Anthropic Claude.
+ * - Includes 1-tap `testApiConnection()` validator and smart offline heuristic fallback.
  */
 class GeminiAiService(
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
@@ -63,8 +71,55 @@ class GeminiAiService(
     }
 
     /**
+     * Tests the user's BYOK API key against the selected AI provider and measures round-trip latency.
+     */
+    suspend fun testApiConnection(
+        provider: AiProviderType,
+        apiKey: String,
+        model: String
+    ): ApiConnectionTestResult = withContext(Dispatchers.IO) {
+        val cleanKey = apiKey.trim()
+        if (cleanKey.isBlank()) {
+            return@withContext ApiConnectionTestResult(
+                isSuccess = false,
+                providerName = provider.displayName,
+                modelName = model,
+                latencyMs = 0L,
+                message = "No API key entered. App is currently running in Smart Offline Heuristic mode."
+            )
+        }
+
+        val startMs = System.currentTimeMillis()
+        runCatching {
+            val testPrompt = """Return ONLY valid JSON: {"status":"ok"}"""
+            val reply = callProviderJson(
+                provider = provider,
+                apiKey = cleanKey,
+                model = model.ifBlank { provider.defaultModel },
+                prompt = testPrompt
+            )
+            val elapsed = System.currentTimeMillis() - startMs
+            ApiConnectionTestResult(
+                isSuccess = reply.isNotBlank(),
+                providerName = provider.displayName,
+                modelName = model.ifBlank { provider.defaultModel },
+                latencyMs = elapsed,
+                message = "Verified ${provider.displayName} ($model) in ${elapsed}ms! Key is encrypted in Android Keystore."
+            )
+        }.getOrElse { err ->
+            val elapsed = System.currentTimeMillis() - startMs
+            ApiConnectionTestResult(
+                isSuccess = false,
+                providerName = provider.displayName,
+                modelName = model,
+                latencyMs = elapsed,
+                message = "Connection failed: ${err.message?.take(120) ?: "Check API key or model name"}"
+            )
+        }
+    }
+
+    /**
      * Phase 1: Categorizes an Instagram Reel into Domain, Subject, Boards, and Moods.
-     * Uses Gemini 2.5 Flash if API key is configured; falls back to smart local heuristic classifier if offline or no key yet.
      */
     suspend fun classifyPinPhase1(
         apiKey: String,
@@ -73,7 +128,8 @@ class GeminiAiService(
         caption: String,
         audioTrack: String,
         availableBoardNames: List<String>,
-        availableMoodNames: List<String>
+        availableMoodNames: List<String>,
+        provider: AiProviderType = AiProviderType.GEMINI
     ): Phase1ClassificationResult = withContext(Dispatchers.IO) {
         val localFallback = heuristicClassify(authorHandle, caption, availableBoardNames, availableMoodNames)
         if (apiKey.isBlank()) return@withContext localFallback
@@ -95,7 +151,7 @@ class GeminiAiService(
         """.trimIndent()
 
         runCatching {
-            val responseText = callGeminiJson(apiKey, model, prompt)
+            val responseText = callProviderJson(provider, apiKey, model, prompt)
             json.decodeFromString<Phase1ClassificationResult>(responseText)
         }.getOrDefault(localFallback)
     }
@@ -109,15 +165,18 @@ class GeminiAiService(
         apiKey: String,
         model: String = "gemini-2.5-flash",
         pin: VideoPin,
-        creatorNiche: String
+        creatorNiche: String,
+        provider: AiProviderType = AiProviderType.GEMINI,
+        scriptDurationSec: Int = 45,
+        scriptTone: String = "High-Retention Educational (English)"
     ): VideoAnalysis = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) {
-            return@withContext generateSmartOfflineAnalysis(pin, creatorNiche)
+            return@withContext generateSmartOfflineAnalysis(pin, creatorNiche, scriptDurationSec, scriptTone)
         }
 
         val prompt = """
             You are an expert short-form video strategist, scriptwriter, and content repurposing producer.
-            Analyze this saved Instagram Reel so the user can extract every bit of knowledge and recreate/repurpose a high-performing version in their own style.
+            Analyze this saved Instagram Reel so the user can extract every bit of knowledge and recreate/repurpose a high-performing ${scriptDurationSec}-second version in their own style ($scriptTone).
 
             Reel URL: ${pin.instagramUrl}
             Creator: @${pin.authorHandle} (${pin.authorDisplayName})
@@ -127,6 +186,8 @@ class GeminiAiService(
             Audio Track: ${pin.audioTrackName}
             User's Personal Notes: ${pin.userNotes}
             User's Creator Positioning: $creatorNiche
+            Target Script Duration: ${scriptDurationSec} seconds
+            Target Script Tone & Language: $scriptTone
 
             Return ONLY a valid JSON object with the exact keys below:
             {
@@ -141,7 +202,7 @@ class GeminiAiService(
               ],
               "fullTranscriptAndOnScreenText": "Reconstructed spoken script / voiceover beat-by-beat + key on-screen text callouts.",
               "hookBreakdown": "Detailed analysis of the 0-3 second Hook: visual disruption, curiosity gap, and spoken opening line.",
-              "bodyStructureBreakdown": "How the middle 4-25 seconds maintain retention: pacing, value delivery sequence, and pattern interrupts.",
+              "bodyStructureBreakdown": "How the middle section maintains retention: pacing, value delivery sequence, and pattern interrupts.",
               "ctaBreakdown": "How the creator closes the video (comment trigger, save prompt, loop transition) and why it works.",
               "editingAndVisualNotes": "Breakdown of editing style: cut frequency, zoom/keyframes, B-roll overlays, typography/captions, and sound design.",
               "alternativeHooks": [
@@ -149,21 +210,21 @@ class GeminiAiService(
                 "Hook Option 2 (Direct Value / Tutorial angle)",
                 "Hook Option 3 (Story / Case-Study angle)"
               ],
-              "recreateTeleprompterScript": "A complete, ready-to-record 35-45 second script inspired by this Reel's core lesson, rewritten freshly in an authentic, high-retention educational voice with [VISUAL CUE] markers.",
+              "recreateTeleprompterScript": "A complete, ready-to-record ${scriptDurationSec}-second script inspired by this Reel's core lesson, written in ($scriptTone) with [VISUAL CUE] markers.",
               "shotListAndEditChecklist": [
                 "Shot 1 (0-3s): Talking head + bold text overlay...",
                 "Shot 2 (3-12s): Screen recording / B-roll demonstration...",
-                "Shot 3 (12-25s): Step-by-step breakdown with sound effects...",
+                "Shot 3 (12-${scriptDurationSec}s): Step-by-step breakdown with sound effects...",
                 "Edit Check: Add auto-captions, 1.1x pacing, and loop ending."
               ]
             }
         """.trimIndent()
 
         val dto = runCatching {
-            val responseText = callGeminiJson(apiKey, model, prompt)
+            val responseText = callProviderJson(provider, apiKey, model, prompt)
             json.decodeFromString<Phase2DeepAnalysisDto>(responseText)
         }.getOrElse {
-            return@withContext generateSmartOfflineAnalysis(pin, creatorNiche)
+            return@withContext generateSmartOfflineAnalysis(pin, creatorNiche, scriptDurationSec, scriptTone)
         }
 
         VideoAnalysis(
@@ -179,13 +240,44 @@ class GeminiAiService(
             alternativeHooksJson = json.encodeToString(dto.alternativeHooks),
             recreateTeleprompterScript = dto.recreateTeleprompterScript,
             shotListAndEditChecklistJson = json.encodeToString(dto.shotListAndEditChecklist),
-            modelUsed = model,
+            modelUsed = "${provider.displayName} ($model)",
             analyzedAt = System.currentTimeMillis()
         )
     }
 
-    private fun callGeminiJson(apiKey: String, model: String, prompt: String): String {
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+    private fun callProviderJson(
+        provider: AiProviderType,
+        apiKey: String,
+        model: String,
+        prompt: String
+    ): String {
+        return when (provider) {
+            AiProviderType.GEMINI -> callGeminiHeaderAuth(apiKey, model.ifBlank { "gemini-2.5-flash" }, prompt)
+            AiProviderType.OPENAI -> callOpenAiCompatible(
+                endpoint = "https://api.openai.com/v1/chat/completions",
+                apiKey = apiKey,
+                model = model.ifBlank { "gpt-4o-mini" },
+                prompt = prompt
+            )
+            AiProviderType.GROQ -> callOpenAiCompatible(
+                endpoint = "https://api.groq.com/openai/v1/chat/completions",
+                apiKey = apiKey,
+                model = model.ifBlank { "llama-3.3-70b-versatile" },
+                prompt = prompt
+            )
+            AiProviderType.ANTHROPIC -> callAnthropicClaude(
+                apiKey = apiKey,
+                model = model.ifBlank { "claude-3-5-sonnet-latest" },
+                prompt = prompt
+            )
+        }
+    }
+
+    /**
+     * Secure Gemini call using `x-goog-api-key` HTTP header instead of URL query parameter (`MASVS-NETWORK`).
+     */
+    private fun callGeminiHeaderAuth(apiKey: String, model: String, prompt: String): String {
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
         val payload = buildJsonObject {
             put("contents", buildJsonArray {
                 add(buildJsonObject {
@@ -204,12 +296,14 @@ class GeminiAiService(
 
         val request = Request.Builder()
             .url(url)
+            .header("x-goog-api-key", apiKey)
+            .header("Content-Type", "application/json")
             .post(payload.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
         httpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                throw IllegalStateException("Gemini API HTTP ${response.code}")
+                throw IllegalStateException("Gemini HTTP ${response.code}")
             }
             val bodyStr = response.body?.string().orEmpty()
             val root = json.parseToJsonElement(bodyStr).jsonObject
@@ -221,7 +315,95 @@ class GeminiAiService(
                 ?.jsonObject?.get("text")
                 ?.jsonPrimitive?.content
                 ?: throw IllegalStateException("Empty Gemini response")
-            return text.trim().removeSurrounding("```json", "```").trim()
+            return extractCleanJsonObject(text)
+        }
+    }
+
+    private fun callOpenAiCompatible(endpoint: String, apiKey: String, model: String, prompt: String): String {
+        val payload = buildJsonObject {
+            put("model", model)
+            put("temperature", 0.3)
+            put("response_format", buildJsonObject {
+                put("type", "json_object")
+            })
+            put("messages", buildJsonArray {
+                add(buildJsonObject {
+                    put("role", "system")
+                    put("content", "You are a precise JSON generator. Always respond with valid JSON only.")
+                })
+                add(buildJsonObject {
+                    put("role", "user")
+                    put("content", prompt)
+                })
+            })
+        }
+
+        val request = Request.Builder()
+            .url(endpoint)
+            .header("Authorization", "Bearer $apiKey")
+            .header("Content-Type", "application/json")
+            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IllegalStateException("Provider HTTP ${response.code}")
+            }
+            val bodyStr = response.body?.string().orEmpty()
+            val root = json.parseToJsonElement(bodyStr).jsonObject
+            val text = root["choices"]
+                ?.jsonArray?.firstOrNull()
+                ?.jsonObject?.get("message")
+                ?.jsonObject?.get("content")
+                ?.jsonPrimitive?.content
+                ?: throw IllegalStateException("Empty OpenAI/Groq response")
+            return extractCleanJsonObject(text)
+        }
+    }
+
+    private fun callAnthropicClaude(apiKey: String, model: String, prompt: String): String {
+        val payload = buildJsonObject {
+            put("model", model)
+            put("max_tokens", 2048)
+            put("messages", buildJsonArray {
+                add(buildJsonObject {
+                    put("role", "user")
+                    put("content", "$prompt\n\nRespond with raw JSON only, starting with { and ending with }.")
+                })
+            })
+        }
+
+        val request = Request.Builder()
+            .url("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", apiKey)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .build()
+
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IllegalStateException("Anthropic HTTP ${response.code}")
+            }
+            val bodyStr = response.body?.string().orEmpty()
+            val root = json.parseToJsonElement(bodyStr).jsonObject
+            val text = root["content"]
+                ?.jsonArray?.firstOrNull()
+                ?.jsonObject?.get("text")
+                ?.jsonPrimitive?.content
+                ?: throw IllegalStateException("Empty Anthropic response")
+            return extractCleanJsonObject(text)
+        }
+    }
+
+    private fun extractCleanJsonObject(raw: String): String {
+        val trimmed = raw.trim().removeSurrounding("```json", "```").removeSurrounding("```", "```").trim()
+        val firstBrace = trimmed.indexOf('{')
+        val lastBrace = trimmed.lastIndexOf('}')
+        return if (firstBrace >= 0 && lastBrace > firstBrace) {
+            trimmed.substring(firstBrace, lastBrace + 1)
+        } else {
+            trimmed
         }
     }
 
@@ -259,10 +441,10 @@ class GeminiAiService(
 
             combined.containsAny(
                 "ai", "chatgpt", "gemini", "claude", "automation", "coding", "python",
-                "nocode", "saas", "prompt", "workflow", "tool"
+                "nocode", "saas", "prompt", "workflow", "tool", "build"
             ) -> Triple("AI & Tech Tools", "AI Workflow & Productivity Tool", "AI")
 
-            else -> Triple("General Education", "Creator Educational Insight", availableBoards.firstOrNull() ?: "Video Editing")
+            else -> Triple("AI & Tech Tools", "Creator Educational Insight", availableBoards.firstOrNull() ?: "Video Editing")
         }
 
         val matchedBoard = availableBoards.firstOrNull {
@@ -283,7 +465,12 @@ class GeminiAiService(
         )
     }
 
-    private fun generateSmartOfflineAnalysis(pin: VideoPin, creatorNiche: String): VideoAnalysis {
+    private fun generateSmartOfflineAnalysis(
+        pin: VideoPin,
+        creatorNiche: String,
+        scriptDurationSec: Int = 45,
+        scriptTone: String = "High-Retention Educational"
+    ): VideoAnalysis {
         val cleanCaption = pin.caption.ifBlank { "Educational Reel in ${pin.domainCategory} by @${pin.authorHandle}" }
         val takeaways = listOf(
             "Core Topic: ${pin.subjectTopic.ifBlank { pin.domainCategory }} shared by @${pin.authorHandle}.",
@@ -293,33 +480,33 @@ class GeminiAiService(
         val tools = listOf(
             "Instagram Reels (@${pin.authorHandle})",
             "Domain: ${pin.domainCategory}",
-            "Add your Gemini API Key in Settings for full live AI transcript & multimodal analysis"
+            "Configure your Gemini / OpenAI / Groq / Claude API Key in Setup for live cloud LLM analysis"
         )
         val altHooks = listOf(
-            "Most people get ${pin.domainCategory.lowercase()} completely wrong—here is the 30-second fix.",
+            "Most people get ${pin.domainCategory.lowercase()} completely wrong—here is the ${scriptDurationSec}-second fix.",
             "Stop scrolling if you want to master ${pin.subjectTopic.ifBlank { pin.domainCategory }} without wasting hours.",
             "I tested @${pin.authorHandle}'s ${pin.domainCategory.lowercase()} framework—here are the exact 3 steps that actually work."
         )
         val checklist = listOf(
             "Shot 1 (0–3s): Direct-to-camera hook with high-contrast headline text on screen.",
             "Shot 2 (3–15s): Over-the-shoulder / screen-recording proof showing the exact problem.",
-            "Shot 3 (15–30s): 3 rapid-fire actionable steps with punch-in zoom cuts every 2.5 seconds.",
-            "Shot 4 (30–38s): Save-worthy summary graphic + 'Save this to your ${pin.domainCategory} board' CTA."
+            "Shot 3 (15–${scriptDurationSec - 8}s): 3 rapid-fire actionable steps with punch-in zoom cuts every 2.5 seconds.",
+            "Shot 4 (${scriptDurationSec - 8}–${scriptDurationSec}s): Save-worthy summary graphic + 'Save this to your ${pin.domainCategory} board' CTA."
         )
 
         return VideoAnalysis(
             pinId = pin.id,
-            executiveSummary = "Structured breakdown of @${pin.authorHandle}'s ${pin.domainCategory} Reel (${pin.subjectTopic.ifBlank { "Core Tutorial" }}). Configure your Gemini API key in Settings anytime to run live cloud LLM enrichment.",
+            executiveSummary = "Structured breakdown of @${pin.authorHandle}'s ${pin.domainCategory} Reel (${pin.subjectTopic.ifBlank { "Core Tutorial" }}). Add your BYOK key (Gemini, OpenAI, Groq, or Claude) in Setup anytime for live cloud LLM enrichment.",
             actionableTakeawaysJson = json.encodeToString(takeaways),
             toolsAndResourcesJson = json.encodeToString(tools),
             fullTranscript = "Caption / On-Screen Context:\n$cleanCaption",
             hookBreakdown = "0–3s Scroll Stopper: Uses immediate visual contrast and a bold promise around ${pin.subjectTopic.ifBlank { pin.domainCategory }} to lock viewer curiosity.",
-            bodyStructureBreakdown = "3–25s Value Delivery: Breaks the concept into digestible micro-steps with visual pattern interrupts every 3 seconds.",
-            ctaBreakdown = "25–35s Close: Prompts viewers to save the video for reference because the steps require repeat viewing.",
+            bodyStructureBreakdown = "3–${scriptDurationSec - 8}s Value Delivery ($scriptTone): Breaks the concept into digestible micro-steps with visual pattern interrupts every 3 seconds.",
+            ctaBreakdown = "${scriptDurationSec - 8}–${scriptDurationSec}s Close: Prompts viewers to save the video for reference because the steps require repeat viewing.",
             editingAndVisualNotes = "Fast jump-cuts (zero dead air), high-contrast center-screen captions, subtle whoosh/riser SFX on transitions.",
             alternativeHooksJson = json.encodeToString(altHooks),
             recreateTeleprompterScript = buildString {
-                appendLine("[0:00 - HOOK | Bold Text on Screen]")
+                appendLine("[0:00 - HOOK | Bold Text on Screen | Tone: $scriptTone]")
                 appendLine("\"${altHooks.first()}\"")
                 appendLine()
                 appendLine("[0:04 - THE PROBLEM | Quick B-Roll / Screen Demo]")
@@ -328,11 +515,11 @@ class GeminiAiService(
                 appendLine("[0:12 - 3 ACTIONABLE STEPS | Punch-in Zooms]")
                 appendLine("\"First: set up your baseline structure. Second: apply the core technique from this framework. Third: review and lock in the result.\"")
                 appendLine()
-                appendLine("[0:30 - CTA | Seamless Loop]")
+                appendLine("[0:${scriptDurationSec - 8} - CTA | Seamless Loop]")
                 appendLine("\"Save this video so you have the checklist ready next time you need it.\"")
             },
             shotListAndEditChecklistJson = json.encodeToString(checklist),
-            modelUsed = "instapin-local-template (Add Gemini API key for live AI)",
+            modelUsed = "InstaPin Smart Local Engine (Add BYOK Key for Cloud AI)",
             analyzedAt = System.currentTimeMillis()
         )
     }

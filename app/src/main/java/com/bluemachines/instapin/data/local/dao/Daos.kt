@@ -28,6 +28,10 @@ interface PinDao {
     fun observeAllPopulatedPins(): Flow<List<PopulatedVideoPin>>
 
     @Transaction
+    @Query("SELECT * FROM video_pins ORDER BY savedAt DESC")
+    suspend fun getAllPopulatedPins(): List<PopulatedVideoPin>
+
+    @Transaction
     @Query("SELECT * FROM video_pins WHERE id = :pinId LIMIT 1")
     fun observePopulatedPinById(pinId: Long): Flow<PopulatedVideoPin?>
 

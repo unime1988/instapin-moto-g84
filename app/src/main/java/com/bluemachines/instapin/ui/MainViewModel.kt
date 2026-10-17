@@ -1,9 +1,14 @@
 package com.bluemachines.instapin.ui
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.bluemachines.instapin.data.local.AiProviderType
 import com.bluemachines.instapin.data.local.AppPreferences
+import com.bluemachines.instapin.data.local.AppThemePreset
+import com.bluemachines.instapin.data.local.FeedLayoutMode
+import com.bluemachines.instapin.data.local.FontScalePreset
 import com.bluemachines.instapin.data.local.UserSettings
 import com.bluemachines.instapin.data.local.entity.AuthorSummary
 import com.bluemachines.instapin.data.local.entity.Board
@@ -14,11 +19,13 @@ import com.bluemachines.instapin.data.local.entity.ImportBatch
 import com.bluemachines.instapin.data.local.entity.MoodTag
 import com.bluemachines.instapin.data.local.entity.PopulatedVideoPin
 import com.bluemachines.instapin.data.local.entity.VideoPin
+import com.bluemachines.instapin.data.remote.ApiConnectionTestResult
 import com.bluemachines.instapin.data.repository.PinRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -46,6 +53,9 @@ class MainViewModel(
 ) : ViewModel() {
 
     val filterState = MutableStateFlow(PinFilterState())
+
+    private val _aiTestStatus = MutableStateFlow<ApiConnectionTestResult?>(null)
+    val aiTestStatus: StateFlow<ApiConnectionTestResult?> = _aiTestStatus.asStateFlow()
 
     val allPins: StateFlow<List<PopulatedVideoPin>> = repository.allPinsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -289,6 +299,79 @@ class MainViewModel(
     fun saveGeminiApiKey(apiKey: String) {
         viewModelScope.launch(Dispatchers.IO) {
             preferences.updateGeminiApiKey(apiKey)
+        }
+    }
+
+    fun saveMultiProviderAiSettings(
+        provider: AiProviderType,
+        apiKey: String,
+        modelName: String,
+        scriptDurationSec: Int,
+        scriptTone: String,
+        creatorNiche: String
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            preferences.updateAiConfiguration(
+                provider = provider,
+                apiKey = apiKey,
+                modelName = modelName,
+                scriptDurationSec = scriptDurationSec,
+                scriptTone = scriptTone,
+                creatorNiche = creatorNiche
+            )
+        }
+    }
+
+    fun testAiConnectionNow(
+        provider: AiProviderType,
+        apiKey: String,
+        modelName: String,
+        scriptDurationSec: Int,
+        scriptTone: String,
+        creatorNiche: String
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            preferences.updateAiConfiguration(
+                provider = provider,
+                apiKey = apiKey,
+                modelName = modelName,
+                scriptDurationSec = scriptDurationSec,
+                scriptTone = scriptTone,
+                creatorNiche = creatorNiche
+            )
+            _aiTestStatus.value = repository.testActiveAiConnection()
+        }
+    }
+
+    fun saveVisualAppearance(
+        themePreset: AppThemePreset,
+        layoutMode: FeedLayoutMode,
+        fontScale: FontScalePreset
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            preferences.updateVisualAppearance(themePreset, layoutMode, fontScale)
+        }
+    }
+
+    fun exportManualBackup(context: Context, onComplete: (String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val file = repository.exportFullBackupSnapshotToFile(context)
+                onComplete("Saved full JSON backup (${file.name})")
+            }.onFailure { err ->
+                onComplete("Backup failed: ${err.message}")
+            }
+        }
+    }
+
+    fun restoreManualBackup(context: Context, onComplete: (String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val count = repository.restoreFullBackupSnapshotFromFile(context)
+                onComplete("Restored $count Pins & Boards from backup!")
+            }.onFailure { err ->
+                onComplete("Restore failed: ${err.message}")
+            }
         }
     }
 

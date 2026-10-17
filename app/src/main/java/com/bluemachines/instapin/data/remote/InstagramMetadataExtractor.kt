@@ -2,6 +2,7 @@ package com.bluemachines.instapin.data.remote
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -45,6 +46,21 @@ class InstagramMetadataExtractor(
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
         )
         private val OG_DESC_HANDLE_REGEX = Regex("""\(@([A-Za-z0-9._]+)\)""")
+
+        private val ALLOWED_INSTAGRAM_HOSTS = setOf(
+            "instagram.com",
+            "www.instagram.com",
+            "m.instagram.com",
+            "instagr.am"
+        )
+
+        fun isTrustedInstagramUrl(url: String?): Boolean {
+            if (url.isNullOrBlank()) return false
+            return runCatching {
+                val parsed = url.toHttpUrlOrNull() ?: return false
+                parsed.isHttps && parsed.host.lowercase() in ALLOWED_INSTAGRAM_HOSTS
+            }.getOrDefault(false)
+        }
 
         fun extractFirstInstagramUrl(rawText: String?): String? {
             if (rawText.isNullOrBlank()) return null
@@ -115,9 +131,11 @@ class InstagramMetadataExtractor(
         var thumbnailUrl = ""
         var isReachable = true
 
-        if (initialUrl.contains("instagram.com/reel/") ||
-            initialUrl.contains("instagram.com/p/") ||
-            initialUrl.contains("instagram.com/share/")
+        if (isTrustedInstagramUrl(initialUrl) && (
+                initialUrl.contains("instagram.com/reel/") ||
+                initialUrl.contains("instagram.com/p/") ||
+                initialUrl.contains("instagram.com/share/")
+            )
         ) {
             runCatching {
                 val request = Request.Builder()

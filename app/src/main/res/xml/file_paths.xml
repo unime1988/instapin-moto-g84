@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="apk_updates" path="updates/" />
+    <files-path name="rollback_apks" path="rollback/" />
+    <files-path name="backups" path="backups/" />
     <files-path name="internal_files" path="." />
 </paths>

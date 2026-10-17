@@ -63,6 +63,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
 
     private var isQuickSheetExpanded by mutableStateOf(false)
     private var isFullScreenWindowMode by mutableStateOf(false)
+    private var bubbleYOffsetPx: Int = 0
 
     companion object {
         private const val CHANNEL_ID = "instapin_overlay_channel"
@@ -154,7 +155,11 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
 
                 if (shouldShowBubble) {
                     if (isQuickSheetExpanded) {
-                        val clipboardUrl = readInstagramUrlFromClipboard() ?: screenContext.detectedUrlFromScreen
+                        val clipboardUrl = if (screenContext.isInstagramForeground) {
+                            readInstagramUrlFromClipboard() ?: screenContext.detectedUrlFromScreen
+                        } else {
+                            screenContext.detectedUrlFromScreen
+                        }
                         QuickSaveOverlaySheet(
                             detectedUrl = clipboardUrl,
                             detectedAuthor = screenContext.authorHandle,
@@ -218,6 +223,17 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                             onStopHoverService = {
                                 manuallyPausedByUser = true
                                 stopSelf()
+                            },
+                            onVerticalDragDelta = { deltaY ->
+                                bubbleYOffsetPx = (bubbleYOffsetPx + deltaY.toInt()).coerceIn(-650, 650)
+                                if (!isFullScreenWindowMode) {
+                                    layoutParams?.let { lp ->
+                                        lp.y = bubbleYOffsetPx
+                                        composeOverlayView?.let { v ->
+                                            runCatching { windowManager.updateViewLayout(v, lp) }
+                                        }
+                                    }
+                                }
                             }
                         )
                     }
@@ -271,6 +287,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
             } else {
                 Gravity.CENTER_VERTICAL or Gravity.END
             }
+            y = if (fullScreen) 0 else bubbleYOffsetPx
         }
     }
 

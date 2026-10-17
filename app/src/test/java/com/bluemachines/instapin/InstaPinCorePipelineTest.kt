@@ -104,4 +104,13 @@ class InstaPinCorePipelineTest {
         assertEquals("creator.one", parsed[1].authorHandle)
         assertNotNull(parsed[0].instagramUrl)
     }
+
+    @Test
+    fun `Domain allowlist blocks SSRF and non-Instagram URLs while allowing valid Instagram HTTPS links`() {
+        assertTrue(InstagramMetadataExtractor.isTrustedInstagramUrl("https://www.instagram.com/reel/C9AbCdEf123/"))
+        assertTrue(InstagramMetadataExtractor.isTrustedInstagramUrl("https://instagram.com/p/XyZ987/"))
+        org.junit.Assert.assertFalse(InstagramMetadataExtractor.isTrustedInstagramUrl("http://www.instagram.com/reel/C9AbCdEf123/"))
+        org.junit.Assert.assertFalse(InstagramMetadataExtractor.isTrustedInstagramUrl("https://evil.example.com/instagram.com/reel/123"))
+        org.junit.Assert.assertFalse(InstagramMetadataExtractor.isTrustedInstagramUrl("http://169.254.169.254/latest/meta-data/"))
+    }
 }

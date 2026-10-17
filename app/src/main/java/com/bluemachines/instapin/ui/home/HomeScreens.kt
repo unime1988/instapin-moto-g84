@@ -22,14 +22,20 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
@@ -42,6 +48,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -57,11 +64,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.bluemachines.instapin.data.local.FeedLayoutMode
 import com.bluemachines.instapin.data.local.entity.AuthorSummary
 import com.bluemachines.instapin.data.local.entity.BoardWithCount
 import com.bluemachines.instapin.data.local.entity.DomainSummary
@@ -75,6 +85,17 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private fun domainAccentColor(domain: String): Color {
+    val d = domain.lowercase()
+    return when {
+        d.contains("edit") -> Color(0xFFE60023)
+        d.contains("trad") -> Color(0xFF10B981)
+        d.contains("health") || d.contains("fit") -> Color(0xFFF59E0B)
+        d.contains("job") || d.contains("career") -> Color(0xFF3B82F6)
+        else -> Color(0xFF8B5CF6)
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PinFeedScreen(
@@ -84,6 +105,9 @@ fun PinFeedScreen(
     domains: List<DomainSummary>,
     authors: List<AuthorSummary>,
     filterState: PinFilterState,
+    layoutMode: FeedLayoutMode = FeedLayoutMode.PINTEREST_MASONRY,
+    fontMultiplier: Float = 1.0f,
+    onToggleLayoutMode: () -> Unit = {},
     onSearchQueryChange: (String) -> Unit,
     onSelectBoard: (Long?) -> Unit,
     onSelectMood: (Long?) -> Unit,
@@ -96,32 +120,57 @@ fun PinFeedScreen(
     onTriggerPhase2: (Long) -> Unit
 ) {
     val context = LocalContext.current
-    val dateFormat = remember { SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()) }
+    val dateFormat = remember { SimpleDateFormat("dd MMM", Locale.getDefault()) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 14.dp)
+            .padding(horizontal = 12.dp)
     ) {
         Spacer(Modifier.height(8.dp))
 
-        // Search Bar
-        OutlinedTextField(
-            value = filterState.searchQuery,
-            onValueChange = onSearchQueryChange,
-            placeholder = { Text("Search by topic, @creator, caption, board, mood...") },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            trailingIcon = {
-                if (filterState.searchQuery.isNotBlank()) {
-                    IconButton(onClick = { onSearchQueryChange("") }) {
-                        Icon(Icons.Default.Clear, contentDescription = "Clear")
+        // Search Bar + Masonry/List Layout Toggle Button
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = filterState.searchQuery,
+                onValueChange = onSearchQueryChange,
+                placeholder = { Text("Search topic, @creator, board, mood...", fontSize = (13 * fontMultiplier).sp) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (filterState.searchQuery.isNotBlank()) {
+                        IconButton(onClick = { onSearchQueryChange("") }) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear")
+                        }
                     }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.weight(1f)
+            )
+
+            Surface(
+                onClick = onToggleLayoutMode,
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.size(52.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = if (layoutMode == FeedLayoutMode.PINTEREST_MASONRY) {
+                            Icons.AutoMirrored.Filled.ViewList
+                        } else {
+                            Icons.Default.GridView
+                        },
+                        contentDescription = "Switch Layout",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
                 }
-            },
-            singleLine = true,
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth()
-        )
+            }
+        }
 
         Spacer(Modifier.height(8.dp))
 
@@ -133,7 +182,6 @@ fun PinFeedScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Reset all filters chip if any active
             val hasActiveFilter = filterState.selectedBoardId != null ||
                 filterState.selectedMoodId != null ||
                 filterState.selectedDomain != null ||
@@ -145,14 +193,14 @@ fun PinFeedScreen(
                 FilterChip(
                     selected = true,
                     onClick = onClearFilters,
-                    label = { Text("✕ Reset Filters") },
+                    label = { Text("✕ Reset") },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = Color(0xFFEF4444)
+                        selectedContainerColor = Color(0xFFEF4444),
+                        selectedLabelColor = Color.White
                     )
                 )
             }
 
-            // Date Filter Chips
             DateFilterRange.entries.forEach { range ->
                 FilterChip(
                     selected = filterState.dateRange == range && range != DateFilterRange.ALL_TIME,
@@ -165,14 +213,12 @@ fun PinFeedScreen(
                 )
             }
 
-            // Phase 2 Repurposed Filter
             FilterChip(
                 selected = filterState.onlyPhase2Analyzed,
                 onClick = { onToggleOnlyAnalyzed(!filterState.onlyPhase2Analyzed) },
-                label = { Text("✨ AI Analyzed") }
+                label = { Text("✨ AI Studio") }
             )
 
-            // Domain Filter Chips
             domains.forEach { dom ->
                 val isSelected = filterState.selectedDomain.equals(dom.domainCategory, ignoreCase = true)
                 FilterChip(
@@ -182,7 +228,6 @@ fun PinFeedScreen(
                 )
             }
 
-            // Author Filter Chips
             authors.take(12).forEach { author ->
                 val isSelected = filterState.selectedAuthor.equals(author.authorHandle, ignoreCase = true)
                 FilterChip(
@@ -192,7 +237,6 @@ fun PinFeedScreen(
                 )
             }
 
-            // Mood Filter Chips
             moods.forEach { mood ->
                 val isSelected = filterState.selectedMoodId == mood.id
                 FilterChip(
@@ -223,176 +267,417 @@ fun PinFeedScreen(
                     Spacer(Modifier.height(12.dp))
                     Text(
                         text = "No Instagram Reels Pinned Yet",
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onBackground,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp
+                        fontSize = (18 * fontMultiplier).sp
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "Start the Floating Hover Bubble from the Moto G84 Setup tab, or tap '+' below to pin a Reel link, or import your historical liked_posts.json in Phase 3!",
-                        color = Color(0xFFA0A0B8),
-                        fontSize = 13.sp
+                        text = "Open Instagram and tap the floating red Pinterest button on the right edge of your screen, or tap '+' below, or test Phase 3 Historical Import!",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        fontSize = (13 * fontMultiplier).sp
+                    )
+                }
+            }
+        } else if (layoutMode == FeedLayoutMode.PINTEREST_MASONRY) {
+            // 2-COLUMN STAGGERED PINTEREST MASONRY GRID
+            LazyVerticalStaggeredGrid(
+                columns = StaggeredGridCells.Fixed(2),
+                contentPadding = PaddingValues(bottom = 88.dp),
+                verticalItemSpacing = 10.dp,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                items(pins, key = { it.pin.id }) { populated ->
+                    PinterestMasonryPinCard(
+                        populated = populated,
+                        fontMultiplier = fontMultiplier,
+                        dateFormat = dateFormat,
+                        onOpenDetail = { onOpenPinDetail(populated.pin.id) },
+                        onTriggerPhase2 = { onTriggerPhase2(populated.pin.id) },
+                        onOpenInstagram = { openInstagramPermalink(context, populated.pin.instagramUrl) },
+                        onAuthorClick = { onSelectAuthor(populated.pin.authorHandle) },
+                        onBoardClick = onSelectBoard
                     )
                 }
             }
         } else {
+            // 1-COLUMN DETAILED LIST
             LazyColumn(
                 contentPadding = PaddingValues(bottom = 88.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(pins, key = { it.pin.id }) { populated ->
-                    val pin = populated.pin
-                    Card(
-                        onClick = { onOpenPinDetail(pin.id) },
-                        shape = RoundedCornerShape(18.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF181826)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            // Top Row: Domain + Author + Date
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Surface(
-                                        color = Color(0xFFE60023).copy(alpha = 0.2f),
-                                        shape = RoundedCornerShape(8.dp)
-                                    ) {
-                                        Text(
-                                            text = pin.domainCategory,
-                                            color = Color(0xFFFF6B81),
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 11.sp,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                        )
-                                    }
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        text = "@${pin.authorHandle}",
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp,
-                                        modifier = Modifier.clickable {
-                                            onSelectAuthor(pin.authorHandle)
-                                        }
-                                    )
-                                }
+                    DetailedListPinCard(
+                        populated = populated,
+                        fontMultiplier = fontMultiplier,
+                        dateFormat = dateFormat,
+                        onOpenDetail = { onOpenPinDetail(populated.pin.id) },
+                        onTriggerPhase2 = { onTriggerPhase2(populated.pin.id) },
+                        onOpenInstagram = { openInstagramPermalink(context, populated.pin.instagramUrl) },
+                        onAuthorClick = { onSelectAuthor(populated.pin.authorHandle) },
+                        onBoardClick = onSelectBoard,
+                        onMoodClick = onSelectMood
+                    )
+                }
+            }
+        }
+    }
+}
 
-                                Text(
-                                    text = dateFormat.format(Date(pin.savedAt)),
-                                    color = Color(0xFFA0A0B8),
-                                    fontSize = 11.sp
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PinterestMasonryPinCard(
+    populated: PopulatedVideoPin,
+    fontMultiplier: Float,
+    dateFormat: SimpleDateFormat,
+    onOpenDetail: () -> Unit,
+    onTriggerPhase2: () -> Unit,
+    onOpenInstagram: () -> Unit,
+    onAuthorClick: () -> Unit,
+    onBoardClick: (Long) -> Unit
+) {
+    val pin = populated.pin
+    val accent = domainAccentColor(pin.domainCategory)
+
+    Card(
+        onClick = onOpenDetail,
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column {
+            // Visual Cover Header (Thumbnail or Rich Gradient Cover)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (pin.thumbnailUrl.isNotBlank()) 156.dp else 96.dp)
+                    .background(
+                        Brush.linearGradient(
+                            listOf(accent.copy(alpha = 0.85f), accent.copy(alpha = 0.28f))
+                        )
+                    )
+            ) {
+                if (pin.thumbnailUrl.isNotBlank()) {
+                    AsyncImage(
+                        model = pin.thumbnailUrl,
+                        contentDescription = pin.subjectTopic,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.65f))
                                 )
-                            }
-
-                            if (pin.subjectTopic.isNotBlank()) {
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    text = pin.subjectTopic,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 15.sp
-                                )
-                            }
-
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                text = pin.caption,
-                                color = Color(0xFFD0D0E4),
-                                fontSize = 13.sp,
-                                maxLines = 3,
-                                overflow = TextOverflow.Ellipsis
                             )
+                    )
+                }
 
-                            if (populated.analysis != null) {
-                                Spacer(Modifier.height(8.dp))
-                                Surface(
-                                    color = Color(0xFF8B5CF6).copy(alpha = 0.16f),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(
-                                        text = "✨ AI Summary: ${populated.analysis.executiveSummary}",
-                                        color = Color(0xFFDDD6FE),
-                                        fontSize = 12.sp,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.padding(10.dp)
-                                    )
-                                }
-                            }
+                // Top-left Domain Badge
+                Surface(
+                    color = Color.Black.copy(alpha = 0.55f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                ) {
+                    Text(
+                        text = pin.domainCategory,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = (10 * fontMultiplier).sp,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                    )
+                }
 
-                            Spacer(Modifier.height(10.dp))
+                // Top-right 1-Tap Watch on IG Icon
+                IconButton(
+                    onClick = onOpenInstagram,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                        .size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayCircleOutline,
+                        contentDescription = "Watch Reel",
+                        tint = Color.White
+                    )
+                }
 
-                            // Bottom Row: Boards + Moods + Actions
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                FlowRow(
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    populated.boards.forEach { b ->
-                                        Surface(
-                                            color = parseHexColor(b.colorHex).copy(alpha = 0.25f),
-                                            shape = RoundedCornerShape(6.dp),
-                                            modifier = Modifier.clickable { onSelectBoard(b.id) }
-                                        ) {
-                                            Text(
-                                                text = "${b.emoji} ${b.name}",
-                                                color = Color.White,
-                                                fontSize = 11.sp,
-                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                                            )
-                                        }
-                                    }
-                                    populated.moods.forEach { m ->
-                                        Surface(
-                                            color = parseHexColor(m.colorHex).copy(alpha = 0.25f),
-                                            shape = RoundedCornerShape(6.dp),
-                                            modifier = Modifier.clickable { onSelectMood(m.id) }
-                                        ) {
-                                            Text(
-                                                text = "${m.emoji} ${m.name}",
-                                                color = Color(0xFFE0E0FF),
-                                                fontSize = 11.sp,
-                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                                            )
-                                        }
-                                    }
-                                }
+                // Bottom-left @Author Handle inside cover
+                Text(
+                    text = "@${pin.authorHandle}",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = (12 * fontMultiplier).sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                        .clickable { onAuthorClick() }
+                )
+            }
 
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    IconButton(
-                                        onClick = { onTriggerPhase2(pin.id) },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.AutoAwesome,
-                                            contentDescription = "Analyze Phase 2",
-                                            tint = if (populated.analysis != null) Color(0xFF10B981) else Color(0xFF8B5CF6),
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                    IconButton(
-                                        onClick = { openInstagramPermalink(context, pin.instagramUrl) },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                                            contentDescription = "Open in Instagram",
-                                            tint = Color(0xFFE60023),
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                }
-                            }
+            Column(modifier = Modifier.padding(11.dp)) {
+                if (pin.subjectTopic.isNotBlank()) {
+                    Text(
+                        text = pin.subjectTopic,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = (13 * fontMultiplier).sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+
+                Text(
+                    text = pin.caption,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
+                    fontSize = (11.5f * fontMultiplier).sp,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = (15 * fontMultiplier).sp
+                )
+
+                if (populated.analysis != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Surface(
+                        color = Color(0xFF8B5CF6).copy(alpha = 0.18f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = "✨ AI Script Ready",
+                            color = Color(0xFFC4B5FD),
+                            fontSize = (10 * fontMultiplier).sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    populated.boards.take(2).forEach { b ->
+                        Surface(
+                            color = parseHexColor(b.colorHex).copy(alpha = 0.22f),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.clickable { onBoardClick(b.id) }
+                        ) {
+                            Text(
+                                text = "${b.emoji} ${b.name}",
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = (10 * fontMultiplier).sp,
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
                         }
+                    }
+                }
+
+                Spacer(Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = dateFormat.format(Date(pin.savedAt)),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        fontSize = (10 * fontMultiplier).sp
+                    )
+                    Row {
+                        IconButton(
+                            onClick = onTriggerPhase2,
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = "AI Repurpose",
+                                tint = if (populated.analysis != null) Color(0xFF10B981) else Color(0xFF8B5CF6),
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = onOpenInstagram,
+                            modifier = Modifier.size(26.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                contentDescription = "Open IG",
+                                tint = Color(0xFFE60023),
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DetailedListPinCard(
+    populated: PopulatedVideoPin,
+    fontMultiplier: Float,
+    dateFormat: SimpleDateFormat,
+    onOpenDetail: () -> Unit,
+    onTriggerPhase2: () -> Unit,
+    onOpenInstagram: () -> Unit,
+    onAuthorClick: () -> Unit,
+    onBoardClick: (Long) -> Unit,
+    onMoodClick: (Long) -> Unit
+) {
+    val pin = populated.pin
+    Card(
+        onClick = onOpenDetail,
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        color = domainAccentColor(pin.domainCategory).copy(alpha = 0.2f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = pin.domainCategory,
+                            color = domainAccentColor(pin.domainCategory),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = (11 * fontMultiplier).sp,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "@${pin.authorHandle}",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = (14 * fontMultiplier).sp,
+                        modifier = Modifier.clickable { onAuthorClick() }
+                    )
+                }
+
+                Text(
+                    text = dateFormat.format(Date(pin.savedAt)),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    fontSize = (11 * fontMultiplier).sp
+                )
+            }
+
+            if (pin.subjectTopic.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = pin.subjectTopic,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = (15 * fontMultiplier).sp
+                )
+            }
+
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = pin.caption,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.82f),
+                fontSize = (13 * fontMultiplier).sp,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            if (populated.analysis != null) {
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    color = Color(0xFF8B5CF6).copy(alpha = 0.16f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "✨ AI Summary: ${populated.analysis.executiveSummary}",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = (12 * fontMultiplier).sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    populated.boards.forEach { b ->
+                        Surface(
+                            color = parseHexColor(b.colorHex).copy(alpha = 0.25f),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.clickable { onBoardClick(b.id) }
+                        ) {
+                            Text(
+                                text = "${b.emoji} ${b.name}",
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = (11 * fontMultiplier).sp,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                    populated.moods.forEach { m ->
+                        Surface(
+                            color = parseHexColor(m.colorHex).copy(alpha = 0.25f),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.clickable { onMoodClick(m.id) }
+                        ) {
+                            Text(
+                                text = "${m.emoji} ${m.name}",
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = (11 * fontMultiplier).sp,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    IconButton(onClick = onTriggerPhase2, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = "Analyze Phase 2",
+                            tint = if (populated.analysis != null) Color(0xFF10B981) else Color(0xFF8B5CF6),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    IconButton(onClick = onOpenInstagram, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                            contentDescription = "Open in Instagram",
+                            tint = Color(0xFFE60023),
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
             }
@@ -428,13 +713,13 @@ fun BoardsGridScreen(
             Column {
                 Text(
                     text = "Your Pinterest Boards",
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onBackground,
                     fontWeight = FontWeight.Bold,
                     fontSize = 20.sp
                 )
                 Text(
                     text = "Boards marked 📌 appear in your Hold-and-Slide Radial Menu",
-                    color = Color(0xFFA0A0B8),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                     fontSize = 12.sp
                 )
             }
@@ -445,7 +730,7 @@ fun BoardsGridScreen(
             ) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("New Board", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("New Board", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
             }
         }
 
@@ -463,7 +748,7 @@ fun BoardsGridScreen(
                 Card(
                     onClick = { onBoardClick(board.id) },
                     shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF181826)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column {
@@ -501,7 +786,7 @@ fun BoardsGridScreen(
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text(
                                 text = board.name,
-                                color = Color.White,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp,
                                 maxLines = 1,
@@ -510,7 +795,7 @@ fun BoardsGridScreen(
                             Spacer(Modifier.height(2.dp))
                             Text(
                                 text = board.description.ifBlank { "Tap to browse saved Reels" },
-                                color = Color(0xFFA0A0B8),
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                                 fontSize = 11.sp,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
@@ -544,7 +829,7 @@ fun BoardsGridScreen(
             Spacer(Modifier.height(10.dp))
             Text(
                 text = "Top Saved Creators (@Author)",
-                color = Color.White,
+                color = MaterialTheme.colorScheme.onBackground,
                 fontWeight = FontWeight.Bold,
                 fontSize = 14.sp
             )

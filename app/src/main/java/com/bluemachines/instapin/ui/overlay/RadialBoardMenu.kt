@@ -11,6 +11,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -108,7 +109,8 @@ fun PinterestRadialOverlay(
     onRadialExpandChange: (Boolean) -> Unit = {},
     onSingleTapOpenSheet: () -> Unit,
     onRadialBoardSelected: (Board?) -> Unit, // null = AI Auto-Categorize
-    onStopHoverService: () -> Unit = {}
+    onStopHoverService: () -> Unit = {},
+    onVerticalDragDelta: (Float) -> Unit = {}
 ) {
     var isRadialExpanded by remember { mutableStateOf(false) }
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
@@ -328,6 +330,14 @@ fun PinterestRadialOverlay(
                                     hoveredIndex = -1
                                 }
                             )
+                        }
+                        .pointerInput(Unit) {
+                            detectVerticalDragGestures { change, dragAmount ->
+                                if (!isRadialExpanded) {
+                                    change.consume()
+                                    onVerticalDragDelta(dragAmount)
+                                }
+                            }
                         }
                 ) {
                     Icon(
