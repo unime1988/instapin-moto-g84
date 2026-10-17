@@ -1,5 +1,7 @@
 package com.bluemachines.instapin.ui.settings
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -910,6 +912,35 @@ fun MotoG84OnboardingAndSettingsScreen(
                                     color = Color(0xFF34D399),
                                     fontSize = 11.sp
                                 )
+                            }
+                            if (report.screenElements.isNotEmpty()) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = "${report.screenElements.size} Instagram screen elements recorded at the failed step " +
+                                        "(button labels, descriptions, IDs; text cut to 40 characters, kept on this phone only).",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp
+                                )
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    val fullText = buildString {
+                                        appendLine("InstaPin ${BuildConfig.VERSION_NAME} - Reel link capture diagnostics")
+                                        appendLine(report.toReadableLine())
+                                        if (report.note.isNotBlank()) appendLine(report.note)
+                                        if (report.screenElements.isNotEmpty()) {
+                                            appendLine("--- Screen elements ---")
+                                            report.screenElements.forEach { appendLine(it) }
+                                        }
+                                    }
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("InstaPin diagnostics", fullText))
+                                    Toast.makeText(context, "Diagnostics copied - paste it into the chat", Toast.LENGTH_SHORT).show()
+                                },
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Copy diagnostics", fontSize = 12.sp)
                             }
                         }
                     }

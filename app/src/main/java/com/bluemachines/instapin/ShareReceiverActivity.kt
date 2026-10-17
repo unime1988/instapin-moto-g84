@@ -25,14 +25,23 @@ import kotlinx.coroutines.withContext
 /**
  * Transparent Overlay Activity launched either:
  * 1. When the user taps the Floating Red Pin over Instagram (after Accessibility clicks Share -> Copy Link), OR
- * 2. When the user taps "Share -> Pin to Board (InstaPin)" inside Instagram.
+ * 2. When Instagram/Android shares a Reel to "Pin to Board (InstaPin)" (manually or via the accessibility fallback).
  *
- * CRITICAL ANDROID 10–14 (Moto G84 5G) FIX:
- * Because `ShareReceiverActivity` is a true foreground `ComponentActivity` (unlike a background Service),
- * Android 14 grants it full `ClipboardManager.primaryClip` access inside `onWindowFocusChanged(true)`!
- * This guarantees the exact copied Reel URL (`https://www.instagram.com/reel/...`) is always captured.
+ * Link priority:
+ * 1. URL delivered by the share intent (EXTRA_TEXT) - always exact, never overwritten by the clipboard.
+ * 2. Clipboard URL read once this focused Activity has window focus (the only place Android 10+
+ *    allows clipboard reads) - but only if it was copied recently, so an old Reel link left on
+ *    the clipboard is never saved against the wrong Reel.
  */
 class ShareReceiverActivity : ComponentActivity() {
+
+    data class PendingFloatingSave(
+        val preselectedBoardId: Long,
+        val author: String,
+        val caption: String,
+        val audioTrack: String,
+        val createdAtMillis: Long = System.currentTimeMillis()
+    )
 
     companion object {
         const val EXTRA_FROM_FLOATING_PIN = "extra_from_floating_pin"
@@ -40,16 +49,33 @@ class ShareReceiverActivity : ComponentActivity() {
         const val EXTRA_AUTHOR_HANDLE = "extra_author_handle"
         const val EXTRA_CAPTION = "extra_caption"
         const val EXTRA_AUDIO_TRACK = "extra_audio_track"
+
+        /** Single tap on the bubble: show the save card instead of auto-saving. */
+        const val NO_PRESELECTED_BOARD = -99L
+
+        private const val PENDING_SAVE_MAX_AGE_MS = 20_000L
+        private const val CLIPBOARD_MAX_AGE_MS = 90_000L
+        private const val CLIPBOARD_PRE_CAPTURE_GRACE_MS = 20_000L
+
+        /**
+         * Set by FloatingOverlayService right before the automation runs, so if the URL arrives
+         * through the Android share screen (ACTION_SEND) we still know which board was chosen.
+         */
+        @Volatile
+        var pendingFloatingSave: PendingFloatingSave? = null
     }
 
     private var capturedInstagramUrl by mutableStateOf("")
+    private var urlCameFromShareIntent = false
     private var handledDirectRadialSave = false
+    private var activeSaveContext by mutableStateOf<PendingFloatingSave?>(null)
 
     private val clipboardListener =
         ClipboardManager.OnPrimaryClipChangedListener {
-            // Live-capture: if the user manually taps "Copy link" in Instagram while this
-            // activity is alive, the exact Reel URL lands on the clipboard and is picked up here.
-            readClipboardInstagramUrl()?.let { capturedInstagramUrl = it }
+            // Live-capture: the clipboard just changed while this screen is open, so it is fresh.
+            if (!urlCameFromShareIntent) {
+                readClipboardInstagramUrl(requireFresh = false)?.let { capturedInstagramUrl = it }
+            }
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,12 +90,9 @@ class ShareReceiverActivity : ComponentActivity() {
             val screenContext by InstaPinAccessibilityService.screenContext.collectAsState()
             val captureReport by InstaPinAccessibilityService.lastCaptureReport.collectAsState()
 
-            val effectiveAuthor = intent?.getStringExtra(EXTRA_AUTHOR_HANDLE)
-                ?.takeIf { it.isNotBlank() }
+            val effectiveAuthor = activeSaveContext?.author?.takeIf { it.isNotBlank() }
                 ?: screenContext.authorHandle
-
-            val effectiveCaption = intent?.getStringExtra(EXTRA_CAPTION)
-                ?.takeIf { it.isNotBlank() }
+            val effectiveCaption = activeSaveContext?.caption?.takeIf { it.isNotBlank() }
                 ?: screenContext.captionSnippet
 
             QuickSaveOverlaySheet(
@@ -85,17 +108,16 @@ class ShareReceiverActivity : ComponentActivity() {
                     finish()
                 },
                 onAutoGrabReelLink = {
-                    readClipboardInstagramUrl()?.also { capturedInstagramUrl = it }
+                    // Explicit user tap: accept whatever Reel link is on the clipboard.
+                    readClipboardInstagramUrl(requireFresh = false)?.also { capturedInstagramUrl = it }
                 },
                 onSavePin = { manualUrl, author, caption, boardIds, moodIds, notes, runPhase2 ->
-                    val finalUrl = manualUrl.trim().ifBlank {
-                        capturedInstagramUrl.ifBlank { readClipboardInstagramUrl().orEmpty() }
-                    }
                     savePinAndFinish(
-                        rawUrl = finalUrl,
+                        rawUrl = manualUrl.trim().ifBlank { capturedInstagramUrl },
                         author = author.ifBlank { effectiveAuthor },
                         caption = caption.ifBlank { effectiveCaption },
-                        audioTrack = screenContext.audioTrackName,
+                        audioTrack = activeSaveContext?.audioTrack?.takeIf { it.isNotBlank() }
+                            ?: screenContext.audioTrackName,
                         boardIds = boardIds,
                         moodIds = moodIds,
                         notes = notes,
@@ -119,10 +141,33 @@ class ShareReceiverActivity : ComponentActivity() {
     private fun handleIncomingIntent(incoming: Intent?) {
         val sharedText = incoming?.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
         val fromShare = InstagramMetadataExtractor.extractFirstInstagramUrl(sharedText)
+        val fromFloatingPin = incoming?.getBooleanExtra(EXTRA_FROM_FLOATING_PIN, false) == true
+
+        // Consume the bubble's pending board choice if it is recent (covers both the direct
+        // floating launch and the ACTION_SEND launch from the Android share screen).
+        val pending = pendingFloatingSave?.takeIf {
+            System.currentTimeMillis() - it.createdAtMillis <= PENDING_SAVE_MAX_AGE_MS
+        }
+        pendingFloatingSave = null
+
+        activeSaveContext = when {
+            fromFloatingPin -> PendingFloatingSave(
+                preselectedBoardId = incoming?.getLongExtra(EXTRA_PRESELECTED_BOARD_ID, NO_PRESELECTED_BOARD)
+                    ?: NO_PRESELECTED_BOARD,
+                author = incoming?.getStringExtra(EXTRA_AUTHOR_HANDLE).orEmpty(),
+                caption = incoming?.getStringExtra(EXTRA_CAPTION).orEmpty(),
+                audioTrack = incoming?.getStringExtra(EXTRA_AUDIO_TRACK).orEmpty()
+            )
+            !fromShare.isNullOrBlank() -> pending
+            else -> null
+        }
+
         if (!fromShare.isNullOrBlank()) {
             capturedInstagramUrl = fromShare
+            urlCameFromShareIntent = true
         } else {
-            readClipboardInstagramUrl()?.let { capturedInstagramUrl = it }
+            urlCameFromShareIntent = false
+            capturedInstagramUrl = readClipboardInstagramUrl(requireFresh = true).orEmpty()
         }
     }
 
@@ -144,8 +189,7 @@ class ShareReceiverActivity : ComponentActivity() {
 
     /**
      * Called by Android as soon as this transparent overlay Activity gains window focus.
-     * At this exact moment, Android 14 permits reading the system clipboard!
-     * Polls briefly in case Instagram writes the copied link a beat after focus lands.
+     * At this exact moment, Android 10+ permits reading the system clipboard.
      */
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
@@ -156,42 +200,68 @@ class ShareReceiverActivity : ComponentActivity() {
 
     private fun runClipboardCaptureAndDirectSave() {
         lifecycleScope.launch {
-            var attempts = 0
-            while (attempts < 5) {
-                val clipUrl = readClipboardInstagramUrl()
-                if (!clipUrl.isNullOrBlank()) {
-                    capturedInstagramUrl = clipUrl
-                    break
+            if (!urlCameFromShareIntent) {
+                var attempts = 0
+                while (attempts < 5) {
+                    val clipUrl = readClipboardInstagramUrl(requireFresh = true)
+                    if (!clipUrl.isNullOrBlank()) {
+                        capturedInstagramUrl = clipUrl
+                        break
+                    }
+                    attempts++
+                    delay(if (attempts == 1) 150L else 450L)
                 }
-                attempts++
-                delay(if (attempts == 1) 150L else 450L)
             }
 
-            // If user used the Hold-and-Slide Radial Menu to pick a specific board,
-            // save immediately once window focus reads the clipboard URL and close!
-            val preselectedBoardId = intent?.getLongExtra(EXTRA_PRESELECTED_BOARD_ID, -99L) ?: -99L
-            if (preselectedBoardId != -99L && !handledDirectRadialSave) {
-                handledDirectRadialSave = true
-                val boardIds = if (preselectedBoardId > 0L) listOf(preselectedBoardId) else emptyList()
-                val screenCtx = InstaPinAccessibilityService.screenContext.value
-                savePinAndFinish(
-                    rawUrl = capturedInstagramUrl,
-                    author = intent?.getStringExtra(EXTRA_AUTHOR_HANDLE).orEmpty().ifBlank { screenCtx.authorHandle },
-                    caption = intent?.getStringExtra(EXTRA_CAPTION).orEmpty().ifBlank { screenCtx.captionSnippet },
-                    audioTrack = intent?.getStringExtra(EXTRA_AUDIO_TRACK).orEmpty().ifBlank { screenCtx.audioTrackName },
-                    boardIds = boardIds,
-                    moodIds = emptyList(),
-                    notes = "",
-                    runPhase2 = false
-                )
+            // Hold-and-slide board choice: save straight away ONLY when the exact Reel link
+            // was captured. Otherwise keep the card open with the warning + Grab button,
+            // so a Legacy (profile-only) pin is never saved silently.
+            val context = activeSaveContext ?: return@launch
+            val preselectedBoardId = context.preselectedBoardId
+            if (preselectedBoardId == NO_PRESELECTED_BOARD || handledDirectRadialSave) return@launch
+            if (capturedInstagramUrl.isBlank()) {
+                Toast.makeText(
+                    this@ShareReceiverActivity,
+                    "Exact Reel link not captured - tap Grab or paste the link, then pick the board",
+                    Toast.LENGTH_LONG
+                ).show()
+                return@launch
             }
+
+            handledDirectRadialSave = true
+            val screenCtx = InstaPinAccessibilityService.screenContext.value
+            savePinAndFinish(
+                rawUrl = capturedInstagramUrl,
+                author = context.author.ifBlank { screenCtx.authorHandle },
+                caption = context.caption.ifBlank { screenCtx.captionSnippet },
+                audioTrack = context.audioTrack.ifBlank { screenCtx.audioTrackName },
+                boardIds = if (preselectedBoardId > 0L) listOf(preselectedBoardId) else emptyList(),
+                moodIds = emptyList(),
+                notes = "",
+                runPhase2 = false
+            )
         }
     }
 
-    private fun readClipboardInstagramUrl(): String? {
+    /**
+     * Reads a Reel/Post URL from the clipboard. With [requireFresh], the clip must have been
+     * copied during the current capture run (or up to 20s before it, when the user copied the
+     * link manually and then tapped the bubble), or within the last 90s if no capture ran.
+     * This stops an old Reel link on the clipboard from being saved against a different Reel.
+     */
+    private fun readClipboardInstagramUrl(requireFresh: Boolean): String? {
         return runCatching {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             val clip = clipboard.primaryClip ?: return null
+            if (requireFresh) {
+                val copiedAt = clip.description?.timestamp ?: 0L
+                val now = System.currentTimeMillis()
+                val report = InstaPinAccessibilityService.lastCaptureReport.value
+                val captureStartedAt = report?.startedAtMillis?.takeIf { now - it <= PENDING_SAVE_MAX_AGE_MS }
+                val oldestAccepted = captureStartedAt?.let { it - CLIPBOARD_PRE_CAPTURE_GRACE_MS }
+                    ?: (now - CLIPBOARD_MAX_AGE_MS)
+                if (copiedAt in 1 until oldestAccepted) return null
+            }
             for (i in 0 until clip.itemCount) {
                 val text = clip.getItemAt(i)?.coerceToText(this)?.toString()
                 val extracted = InstagramMetadataExtractor.extractFirstInstagramUrl(text)
@@ -227,13 +297,15 @@ class ShareReceiverActivity : ComponentActivity() {
                 )
             }
             val boardNames = saved.boards.joinToString(", ") { "${it.emoji} ${it.name}" }
-            val hasVideoCode = saved.pin.instagramUrl.contains("/reel/") || saved.pin.instagramUrl.contains("/p/")
+            val hasVideoCode = saved.pin.instagramUrl.contains("/reel/") ||
+                saved.pin.instagramUrl.contains("/p/") ||
+                saved.pin.instagramUrl.contains("/share/")
             val linkStatus = if (hasVideoCode) {
                 "🔗 Exact Reel Video Saved"
             } else {
                 val failedStep = InstaPinAccessibilityService.lastCaptureReport.value
                     ?.firstFailedStep?.let { " (auto-capture failed at: $it)" }.orEmpty()
-                "Saved @${saved.pin.authorHandle}$failedStep"
+                "Saved @${saved.pin.authorHandle} without exact link$failedStep"
             }
             Toast.makeText(
                 this@ShareReceiverActivity,

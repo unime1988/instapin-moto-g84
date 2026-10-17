@@ -26,11 +26,21 @@ data class LiveInstagramScreenContext(
  * Step-by-step diagnostic report of the last automated "Share -> InstaPin/Copy link" capture run.
  * Surfaced in the Quick Save card and Settings so the exact failing step is always visible.
  */
+enum class ReelCaptureOutcome {
+    /** "Copy link" was tapped; the exact URL is on the clipboard for a focused Activity to read. */
+    COPIED_TO_CLIPBOARD,
+    /** InstaPin was tapped in the Android share screen; the URL arrives via ACTION_SEND EXTRA_TEXT. */
+    SENT_TO_INSTAPIN_SHARE_TARGET,
+    FAILED
+}
+
 data class ReelLinkCaptureReport(
     val timestampMillis: Long = 0L,
+    val startedAtMillis: Long = 0L,
     val steps: List<Pair<String, Boolean>> = emptyList(),
     val note: String = "",
-    val capturedUrl: String? = null
+    val capturedUrl: String? = null,
+    val screenElements: List<String> = emptyList()
 ) {
     val succeeded: Boolean get() = steps.isNotEmpty() && steps.last().second
     val firstFailedStep: String? get() = steps.firstOrNull { !it.second }?.first
@@ -66,18 +76,33 @@ class InstaPinAccessibilityService : AccessibilityService() {
         @Volatile
         private var instance: InstaPinAccessibilityService? = null
 
-        suspend fun triggerAutoCopyLinkAndWait(): Boolean {
+        suspend fun triggerAutoCopyLinkAndWait(): ReelCaptureOutcome {
             val svc = instance
             if (svc == null) {
+                val now = System.currentTimeMillis()
                 _lastCaptureReport.value = ReelLinkCaptureReport(
-                    timestampMillis = System.currentTimeMillis(),
+                    timestampMillis = now,
+                    startedAtMillis = now,
                     steps = listOf("Accessibility service running" to false),
                     note = "Enable InstaPin in Settings -> Accessibility so it can tap Share/Copy link"
                 )
-                return false
+                return ReelCaptureOutcome.FAILED
             }
             return svc.attemptFullShareAndCopyLinkSequence()
         }
+
+        private val SHARE_SHEET_MARKERS = setOf(
+            "copy link", "add to story", "share to", "share to other apps", "send separately", "whatsapp"
+        )
+        private val SHARE_TO_OTHER_APPS_LABELS = setOf(
+            "share to", "share to other apps", "share via", "other apps"
+        )
+
+        /** Lowercases, trims and strips a trailing ellipsis so "Share to…" == "share to". */
+        private fun normalizeLabel(raw: CharSequence?): String =
+            raw?.toString()?.lowercase()?.trim()
+                ?.removeSuffix("…")?.removeSuffix("...")?.trim()
+                .orEmpty()
     }
 
     override fun onServiceConnected() {
@@ -231,97 +256,104 @@ class InstaPinAccessibilityService : AccessibilityService() {
         return cleaned.matches(Regex("""^[a-zA-Z0-9._]+$""")) && cleaned.any { it.isLetter() }
     }
 
+    /** Bounds of the Reel's Share (✈) button we tapped, so it is never re-matched as a sheet item. */
+    private var lastClickedShareRect: Rect? = null
+
     /**
-     * Automated Reel Permalink Capture (multi-strategy, fully diagnosed):
-     * 1. If "Copy link" is already visible on screen, click it directly.
-     * 2. Otherwise click Instagram's "Share"/"Send" (paper-plane) button on the Reel.
-     * 3. Once the share sheet opens, try in order:
-     *    a. Tap our own "Pin to Board (InstaPin)" share target -> Instagram delivers the
-     *       exact Reel URL straight into ShareReceiverActivity via ACTION_SEND EXTRA_TEXT.
-     *       (No clipboard read needed at all - most reliable path.)
-     *    b. Tap "Copy link" -> URL lands on clipboard for the foreground Activity to read.
-     *    c. Tap "Share to..."/"Share to other apps" to open the Android system Sharesheet,
-     *       then tap "Pin to Board (InstaPin)" there.
-     *    d. Scroll the share sheet down between polls (Copy link is often below the fold).
-     * Every step outcome is published to `lastCaptureReport` so the exact failing
-     * step is visible to the user instead of silently producing a Legacy pin.
+     * Automated Reel Permalink Capture (fully diagnosed, safe):
+     * 1. Confirm Instagram is on screen.
+     * 2. If Instagram's share sheet is not already open, tap the Reel's Share (✈) button
+     *    and WAIT until the share sheet is confirmed open (nothing else happens otherwise).
+     * 3. Tap "Copy link" (exact label only). If it is hidden, scroll ONLY the share-sheet row
+     *    that contains the sheet's own labels - never the Reels feed, so we can never move
+     *    on to the next Reel and copy the wrong link.
+     * 4. Fallback: tap exactly "Share to…" (never anything mentioning story) to open the
+     *    Android share screen, then tap "Pin to Board (InstaPin)" -> the URL arrives via
+     *    ACTION_SEND EXTRA_TEXT with no clipboard involved.
+     * On failure, a record of the visible screen elements is saved so the real Instagram
+     * labels/IDs on this phone can be inspected instead of guessed.
      */
-    private suspend fun attemptFullShareAndCopyLinkSequence(): Boolean {
+    private suspend fun attemptFullShareAndCopyLinkSequence(): ReelCaptureOutcome {
+        val startedAt = System.currentTimeMillis()
         val steps = mutableListOf<Pair<String, Boolean>>()
 
-        fun publish(note: String = "", url: String? = null) {
+        fun publish(note: String = "", elements: List<String> = emptyList()) {
             _lastCaptureReport.value = ReelLinkCaptureReport(
                 timestampMillis = System.currentTimeMillis(),
+                startedAtMillis = startedAt,
                 steps = steps.toList(),
                 note = note,
-                capturedUrl = url
+                screenElements = elements
             )
         }
 
-        // Step 0: Confirm Instagram actually holds the foreground
         val igForeground = isInstagramActuallyForeground()
         steps += "Instagram on screen" to igForeground
         if (!igForeground) {
             publish("Instagram is not in the foreground - open a Reel first")
-            return false
+            return ReelCaptureOutcome.FAILED
         }
 
-        // Step 1: If "Copy link" is already visible (share sheet left open), click it
-        if (clickCopyLinkNodeIfVisible()) {
-            steps += "Copy link tap" to true
-            publish("Share sheet was already open")
-            delay(300)
-            return true
-        }
-        // Also check whether the share sheet itself is already open with our app target
-        if (clickInstaPinShareTargetIfVisible()) {
-            steps += "InstaPin share target" to true
-            publish("Sent Reel directly to InstaPin via Android share target")
-            return true
-        }
-
-        // Step 2: Click Instagram's Share / Send (paper-plane) button on the Reel
-        val clickedShare = clickInstagramShareButton()
-        steps += "Share (✈) button tap" to clickedShare
-        if (!clickedShare) {
-            publish("Could not find Instagram's Share button on this screen")
-            return false
-        }
-
-        // Step 3: Poll the share sheet; try InstaPin target first, then Copy link,
-        // then "Share to other apps" -> system Sharesheet -> InstaPin, scrolling as needed.
-        var triedShareToOtherApps = false
-        repeat(8) { attempt ->
-            delay(280)
-
-            if (clickInstaPinShareTargetIfVisible()) {
-                steps += "InstaPin share target" to true
-                publish("Sent Reel directly to InstaPin via Android share target")
-                return true
+        if (isShareSheetOpen()) {
+            steps += "Share sheet open" to true
+        } else {
+            val shareRect = clickInstagramShareButton()
+            steps += "Share (✈) button tap" to (shareRect != null)
+            if (shareRect == null) {
+                publish("Could not find Instagram's Share button on this screen", recordScreenElements())
+                return ReelCaptureOutcome.FAILED
             }
+            lastClickedShareRect = shareRect
 
-            if (clickCopyLinkNodeIfVisible()) {
+            var opened = false
+            var waits = 0
+            while (!opened && waits < 8) {
+                delay(250)
+                opened = isShareSheetOpen()
+                waits++
+            }
+            steps += "Share sheet opened" to opened
+            if (!opened) {
+                publish("Tapped Share but Instagram's share sheet did not appear", recordScreenElements())
+                return ReelCaptureOutcome.FAILED
+            }
+        }
+
+        // Copy link: try, then scroll only the share-sheet row, up to 4 times
+        repeat(4) {
+            if (clickCopyLinkInShareSheet()) {
                 steps += "Copy link tap" to true
                 publish()
-                delay(300)
-                return true
+                delay(350)
+                return ReelCaptureOutcome.COPIED_TO_CLIPBOARD
             }
+            scrollShareSheetRowOnly()
+            delay(300)
+        }
+        steps += "Copy link tap" to false
 
-            if (!triedShareToOtherApps && attempt >= 3) {
-                if (clickShareToOtherAppsIfVisible()) {
-                    triedShareToOtherApps = true
+        // Fallback: Share to… -> Android share screen -> Pin to Board (InstaPin)
+        val elementsBeforeFallback = recordScreenElements()
+        val openedAndroidShare = clickShareToOtherApps()
+        steps += "Share to… tap" to openedAndroidShare
+        if (openedAndroidShare) {
+            repeat(8) {
+                delay(300)
+                if (clickInstaPinShareTarget()) {
+                    steps += "InstaPin share target" to true
+                    publish("Sent the Reel to InstaPin through the Android share screen")
+                    return ReelCaptureOutcome.SENT_TO_INSTAPIN_SHARE_TARGET
                 }
             }
-
-            scrollShareSheetDown()
+            steps += "InstaPin share target" to false
         }
 
-        steps += "Copy link / InstaPin target" to false
         publish(
-            "Share menu opened but neither 'Copy link' nor 'Pin to Board (InstaPin)' was found on this Instagram version. " +
-                "Tap the Reel's Share -> Copy link manually, then save."
+            "Share sheet opened but 'Copy link' was not found on this Instagram version. " +
+                "Tap the Reel's Share -> Copy link yourself, then tap Grab in the card.",
+            elementsBeforeFallback
         )
-        return false
+        return ReelCaptureOutcome.FAILED
     }
 
     private fun isInstagramActuallyForeground(): Boolean {
@@ -349,147 +381,147 @@ class InstaPinAccessibilityService : AccessibilityService() {
             .filter { it.packageName?.toString() != INSTAPIN_PACKAGE }
     }
 
-    /**
-     * Finds and taps InstaPin's own share target ("Pin to Board (InstaPin)") inside
-     * Instagram's share sheet or the Android system Sharesheet. When tapped, Instagram
-     * fires ACTION_SEND with the exact Reel URL in EXTRA_TEXT - no clipboard needed.
-     */
-    private fun clickInstaPinShareTargetIfVisible(): Boolean {
-        val targetKeywords = listOf("instapin", "pin to board")
+    /** Depth-first search across all non-InstaPin windows; returns the first matching node. */
+    private fun findNode(predicate: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo? {
         for (root in allWindowRoots()) {
             var match: AccessibilityNodeInfo? = null
-            fun search(node: AccessibilityNodeInfo?, depth: Int) {
-                if (node == null || depth > 26 || match != null) return
-                val txt = node.text?.toString()?.lowercase().orEmpty()
-                val desc = node.contentDescription?.toString()?.lowercase().orEmpty()
-                if (targetKeywords.any { kw -> txt.contains(kw) || desc.contains(kw) }) {
+            fun walk(node: AccessibilityNodeInfo?, depth: Int) {
+                if (node == null || depth > 30 || match != null) return
+                if (runCatching { predicate(node) }.getOrDefault(false)) {
                     match = node
                     return
                 }
                 for (i in 0 until node.childCount) {
-                    search(node.getChild(i), depth + 1)
+                    walk(node.getChild(i), depth + 1)
                 }
             }
-            runCatching { search(root, 0) }
-            if (match != null && clickNodeOrTapBounds(match!!)) {
-                return true
+            runCatching { walk(root, 0) }
+            match?.let { return it }
+        }
+        return null
+    }
+
+    private fun boundsOf(node: AccessibilityNodeInfo): Rect = Rect().also { node.getBoundsInScreen(it) }
+
+    private fun isShareSheetMarker(node: AccessibilityNodeInfo): Boolean {
+        val txt = normalizeLabel(node.text)
+        val desc = normalizeLabel(node.contentDescription)
+        return txt in SHARE_SHEET_MARKERS || desc in SHARE_SHEET_MARKERS
+    }
+
+    /** True only when one of the share sheet's own exact labels is visible. */
+    private fun isShareSheetOpen(): Boolean = findNode { isShareSheetMarker(it) } != null
+
+    /** Taps a node whose exact label is "Copy link" (or whose view ID is copy_link). */
+    private fun clickCopyLinkInShareSheet(): Boolean {
+        val node = findNode { n ->
+            val txt = normalizeLabel(n.text)
+            val desc = normalizeLabel(n.contentDescription)
+            val id = n.viewIdResourceName?.lowercase().orEmpty()
+            txt == "copy link" || desc == "copy link" || id.endsWith("copy_link") || id.contains("copy_link_")
+        } ?: return false
+        return clickNodeOrTapBounds(node)
+    }
+
+    /**
+     * Scrolls forward ONLY a scrollable container that (a) holds one of the share sheet's
+     * own labels and (b) is clearly smaller than the full screen and sits in the lower part
+     * of it. The full-screen Reels feed can never qualify, so this can never advance the feed.
+     * No swipe-gesture fallback on purpose.
+     */
+    private fun scrollShareSheetRowOnly(): Boolean {
+        val screenHeight = resources.displayMetrics.heightPixels
+        val anchor = findNode { isShareSheetMarker(it) } ?: return false
+        var current: AccessibilityNodeInfo? = anchor.parent
+        var hops = 0
+        while (current != null && hops < 8) {
+            if (current.isScrollable) {
+                val r = boundsOf(current)
+                val isSmallLowerContainer = r.height() < (screenHeight * 0.6f) && r.top > (screenHeight * 0.3f)
+                if (isSmallLowerContainer) {
+                    return current.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                }
+                return false
             }
+            current = current.parent
+            hops++
         }
         return false
     }
 
     /**
-     * Taps Instagram's "Share to..." / "Share to other apps" / "More" entry inside the
-     * share sheet, which opens the Android system Sharesheet where InstaPin is listed.
+     * Taps exactly "Share to…" / "Share to other apps" / "Share via" / "Other apps".
+     * Anything mentioning story/stories is never tapped, and the Reel's own Share (✈)
+     * button is excluded by its bounds.
      */
-    private fun clickShareToOtherAppsIfVisible(): Boolean {
-        val keywords = listOf("share to other apps", "share to", "other apps", "share via")
+    private fun clickShareToOtherApps(): Boolean {
+        val excluded = lastClickedShareRect
+        val node = findNode { n ->
+            val txt = normalizeLabel(n.text)
+            val desc = normalizeLabel(n.contentDescription)
+            val label = if (txt.isNotBlank()) txt else desc
+            label in SHARE_TO_OTHER_APPS_LABELS &&
+                !label.contains("story") &&
+                (excluded == null || boundsOf(n) != excluded)
+        } ?: return false
+        return clickNodeOrTapBounds(node)
+    }
+
+    /**
+     * Taps InstaPin's own entry ("Pin to Board (InstaPin)") in the Android share screen.
+     * Android then delivers the exact Reel URL to ShareReceiverActivity via ACTION_SEND.
+     */
+    private fun clickInstaPinShareTarget(): Boolean {
+        val node = findNode { n ->
+            val txt = normalizeLabel(n.text)
+            val desc = normalizeLabel(n.contentDescription)
+            txt.contains("instapin") || desc.contains("instapin") ||
+                txt.startsWith("pin to board") || desc.startsWith("pin to board")
+        } ?: return false
+        return clickNodeOrTapBounds(node)
+    }
+
+    /**
+     * Records up to 80 visible screen elements (label, description, view ID, clickable) from
+     * non-InstaPin windows. Text is cut to 40 characters. Stored on-device only; the user
+     * chooses whether to copy it from Settings.
+     */
+    private fun recordScreenElements(): List<String> {
+        val lines = mutableListOf<String>()
         for (root in allWindowRoots()) {
-            var match: AccessibilityNodeInfo? = null
-            fun search(node: AccessibilityNodeInfo?, depth: Int) {
-                if (node == null || depth > 26 || match != null) return
-                val txt = node.text?.toString()?.lowercase().orEmpty()
-                val desc = node.contentDescription?.toString()?.lowercase().orEmpty()
-                if (keywords.any { kw -> txt == kw || txt.contains(kw) || desc.contains(kw) }) {
-                    match = node
-                    return
+            val pkg = root.packageName?.toString().orEmpty().substringAfterLast('.')
+            fun walk(node: AccessibilityNodeInfo?, depth: Int) {
+                if (node == null || depth > 30 || lines.size >= 80) return
+                val txt = node.text?.toString()?.trim().orEmpty().take(40)
+                val desc = node.contentDescription?.toString()?.trim().orEmpty().take(40)
+                val id = node.viewIdResourceName?.substringAfter(":id/").orEmpty()
+                if (txt.isNotBlank() || desc.isNotBlank() || (node.isClickable && id.isNotBlank())) {
+                    val parts = buildList {
+                        if (txt.isNotBlank()) add("text='$txt'")
+                        if (desc.isNotBlank()) add("desc='$desc'")
+                        if (id.isNotBlank()) add("id=$id")
+                        if (node.isClickable) add("click")
+                        if (node.isScrollable) add("scroll")
+                    }
+                    lines += "[$pkg] ${parts.joinToString(" ")}"
                 }
                 for (i in 0 until node.childCount) {
-                    search(node.getChild(i), depth + 1)
+                    walk(node.getChild(i), depth + 1)
                 }
             }
-            runCatching { search(root, 0) }
-            if (match != null && clickNodeOrTapBounds(match!!)) {
-                return true
-            }
+            runCatching { walk(root, 0) }
         }
-        return false
+        return lines
     }
 
-    /** Scrolls the share sheet downward to reveal a hidden "Copy link" / app target row. */
-    private fun scrollShareSheetDown() {
-        for (root in allWindowRoots()) {
-            var scrolled = false
-            fun search(node: AccessibilityNodeInfo?, depth: Int) {
-                if (node == null || depth > 26 || scrolled) return
-                if (node.isScrollable &&
-                    node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
-                ) {
-                    scrolled = true
-                    return
-                }
-                for (i in 0 until node.childCount) {
-                    search(node.getChild(i), depth + 1)
-                }
-            }
-            runCatching { search(root, 0) }
-            if (scrolled) return
-        }
-        // Gesture fallback: swipe up across the bottom 40% of the screen where the share sheet sits
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            val w = resources.displayMetrics.widthPixels.toFloat()
-            val h = resources.displayMetrics.heightPixels.toFloat()
-            val path = Path().apply {
-                moveTo(w * 0.5f, h * 0.82f)
-                lineTo(w * 0.5f, h * 0.55f)
-            }
-            val stroke = GestureDescription.StrokeDescription(path, 0L, 220L)
-            runCatching { dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null) }
-        }
-    }
-
-    private fun clickCopyLinkNodeIfVisible(): Boolean {
+    /**
+     * Taps the Reel's Share (✈) button and returns its screen bounds, or null if not found.
+     * Prefers a share-described node in the right-hand action column; falls back to the 3rd
+     * icon of that column (Like, Comment, Share, More).
+     */
+    private fun clickInstagramShareButton(): Rect? {
         val allRoots = allWindowRoots()
-
-        val copyKeywords = listOf("copy link", "copylink", "link copy", "copy url", "copy video link")
-
-        for (root in allRoots) {
-            // 1. Direct text search
-            val byTextNodes = root.findAccessibilityNodeInfosByText("Copy link")
-                ?: root.findAccessibilityNodeInfosByText("Copy")
-            val match = byTextNodes?.firstOrNull { n ->
-                val txt = n.text?.toString()?.lowercase().orEmpty()
-                val desc = n.contentDescription?.toString()?.lowercase().orEmpty()
-                val id = n.viewIdResourceName?.lowercase().orEmpty()
-                copyKeywords.any { kw -> txt.contains(kw) || desc.contains(kw) || id.contains("copy_link") }
-            }
-            if (match != null && clickNodeOrTapBounds(match)) {
-                return true
-            }
-
-            // 2. Full tree walk for contentDescription or viewId containing copy_link
-            var walkedMatch: AccessibilityNodeInfo? = null
-            fun searchCopy(node: AccessibilityNodeInfo?, depth: Int) {
-                if (node == null || depth > 26 || walkedMatch != null) return
-                val id = node.viewIdResourceName?.lowercase().orEmpty()
-                val txt = node.text?.toString()?.lowercase().orEmpty()
-                val desc = node.contentDescription?.toString()?.lowercase().orEmpty()
-
-                if (id.contains("copy_link") ||
-                    id.contains("copylink") ||
-                    txt.contains("copy link") ||
-                    txt.contains("copy url") ||
-                    desc.contains("copy link") ||
-                    desc.contains("copy url")
-                ) {
-                    walkedMatch = node
-                    return
-                }
-                for (i in 0 until node.childCount) {
-                    searchCopy(node.getChild(i), depth + 1)
-                }
-            }
-            runCatching { searchCopy(root, 0) }
-            if (walkedMatch != null && clickNodeOrTapBounds(walkedMatch!!)) {
-                return true
-            }
-        }
-        return false
-    }
-
-    private fun clickInstagramShareButton(): Boolean {
-        val allRoots = allWindowRoots()
-        if (allRoots.isEmpty()) return false
+        if (allRoots.isEmpty()) return null
         val screenWidth = resources.displayMetrics.widthPixels
         val screenHeight = resources.displayMetrics.heightPixels
 
@@ -497,10 +529,10 @@ class InstaPinAccessibilityService : AccessibilityService() {
         val rightColumnButtonCandidates = mutableListOf<Pair<AccessibilityNodeInfo, Rect>>()
 
         fun searchShare(node: AccessibilityNodeInfo?, depth: Int) {
-            if (node == null || depth > 26) return
+            if (node == null || depth > 30) return
             val viewId = node.viewIdResourceName.orEmpty().lowercase()
-            val desc = node.contentDescription?.toString()?.lowercase().orEmpty()
-            val text = node.text?.toString()?.lowercase().orEmpty()
+            val desc = normalizeLabel(node.contentDescription)
+            val text = normalizeLabel(node.text)
 
             val isShareViewId = viewId.contains("direct_share") ||
                 viewId.contains("clips_share") ||
@@ -509,23 +541,23 @@ class InstaPinAccessibilityService : AccessibilityService() {
                 viewId.contains("send_button") ||
                 viewId.contains("ufi_share")
 
-            val isShareDesc = desc.contains("share") ||
-                desc.contains("send post") ||
-                desc.contains("send reel") ||
-                desc.contains("send to") ||
-                desc.contains("reshare") ||
+            val isShareDesc = desc == "share" ||
+                desc == "send" ||
+                desc.startsWith("send post") ||
+                desc.startsWith("send reel") ||
+                desc.startsWith("share reel") ||
+                desc.startsWith("share post") ||
                 text == "share" ||
                 text == "send"
 
+            val mentionsStory = desc.contains("story") || text.contains("story")
             val rect = Rect()
             node.getBoundsInScreen(rect)
 
-            if (isShareViewId || isShareDesc) {
+            if ((isShareViewId || isShareDesc) && !mentionsStory) {
                 shareCandidates.add(node to rect)
             }
 
-            // Also record clickable icons in Instagram Reels' right-hand vertical action column
-            // (x > 82% of screenWidth, y between 45% and 88% of screenHeight)
             if (node.isClickable &&
                 rect.centerX() > (screenWidth * 0.82f) &&
                 rect.centerY() in (screenHeight * 0.45f).toInt()..(screenHeight * 0.88f).toInt() &&
@@ -541,28 +573,17 @@ class InstaPinAccessibilityService : AccessibilityService() {
 
         allRoots.forEach { runCatching { searchShare(it, 0) } }
 
-        if (shareCandidates.isNotEmpty()) {
-            // Prefer a share-described node located in the Reel's right-side action column
-            val rightSide = shareCandidates.firstOrNull {
-                it.second.centerX() > (screenWidth * 0.7f) &&
-                    it.second.centerY() in (screenHeight * 0.25f).toInt()..(screenHeight * 0.92f).toInt()
-            }
-            val chosen = rightSide ?: shareCandidates.first()
-            return clickNodeOrTapBounds(chosen.first)
-        }
+        val chosen = shareCandidates.firstOrNull {
+            it.second.centerX() > (screenWidth * 0.7f) &&
+                it.second.centerY() in (screenHeight * 0.25f).toInt()..(screenHeight * 0.92f).toInt()
+        } ?: shareCandidates.firstOrNull()
+            ?: rightColumnButtonCandidates
+                .distinctBy { it.second.centerY() / 35 }
+                .sortedBy { it.second.centerY() }
+                .getOrNull(2)
+            ?: return null
 
-        // Fallback: In Instagram Reels, the right-side action column is ordered top-to-bottom:
-        // [0] Like (Heart), [1] Comment, [2] Share/Send (Paper Plane), [3] More (...)
-        val sortedRightButtons = rightColumnButtonCandidates
-            .distinctBy { it.second.centerY() / 35 }
-            .sortedBy { it.second.centerY() }
-
-        if (sortedRightButtons.size >= 3) {
-            val paperPlaneNode = sortedRightButtons[2].first
-            return clickNodeOrTapBounds(paperPlaneNode)
-        }
-
-        return false
+        return if (clickNodeOrTapBounds(chosen.first)) chosen.second else null
     }
 
     private fun clickNodeOrTapBounds(node: AccessibilityNodeInfo): Boolean {

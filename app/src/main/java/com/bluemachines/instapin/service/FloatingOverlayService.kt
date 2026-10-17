@@ -215,35 +215,23 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                             onSingleTapOpenSheet = {
                                 vibrateTick()
                                 lifecycleScope.launch {
-                                    // Step 1: While Instagram holds focus, run Share -> InstaPin/Copy Link automation
-                                    InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
-                                    // Step 2: Launch ShareReceiverActivity (a true foreground Translucent Activity)
-                                    // Because Android 13/14 ONLY grants ClipboardManager read access to a foreground Activity
-                                    // inside onWindowFocusChanged(true), launching ShareReceiverActivity guarantees
-                                    // the copied Reel URL (https://www.instagram.com/reel/...) is read from the clipboard!
-                                    val actIntent = Intent(this@FloatingOverlayService, ShareReceiverActivity::class.java).apply {
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                                        putExtra(ShareReceiverActivity.EXTRA_FROM_FLOATING_PIN, true)
-                                        putExtra(ShareReceiverActivity.EXTRA_AUTHOR_HANDLE, screenContext.authorHandle)
-                                        putExtra(ShareReceiverActivity.EXTRA_CAPTION, screenContext.captionSnippet)
-                                        putExtra(ShareReceiverActivity.EXTRA_AUDIO_TRACK, screenContext.audioTrackName)
-                                    }
-                                    startActivity(actIntent)
+                                    captureReelAndOpenSaveScreen(
+                                        preselectedBoardId = ShareReceiverActivity.NO_PRESELECTED_BOARD,
+                                        author = screenContext.authorHandle,
+                                        caption = screenContext.captionSnippet,
+                                        audioTrack = screenContext.audioTrackName
+                                    )
                                 }
                             },
                             onRadialBoardSelected = { selectedBoard: Board? ->
                                 vibrateTick()
                                 lifecycleScope.launch {
-                                    InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
-                                    val actIntent = Intent(this@FloatingOverlayService, ShareReceiverActivity::class.java).apply {
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                                        putExtra(ShareReceiverActivity.EXTRA_FROM_FLOATING_PIN, true)
-                                        putExtra(ShareReceiverActivity.EXTRA_PRESELECTED_BOARD_ID, selectedBoard?.id ?: 0L)
-                                        putExtra(ShareReceiverActivity.EXTRA_AUTHOR_HANDLE, screenContext.authorHandle)
-                                        putExtra(ShareReceiverActivity.EXTRA_CAPTION, screenContext.captionSnippet)
-                                        putExtra(ShareReceiverActivity.EXTRA_AUDIO_TRACK, screenContext.audioTrackName)
-                                    }
-                                    startActivity(actIntent)
+                                    captureReelAndOpenSaveScreen(
+                                        preselectedBoardId = selectedBoard?.id ?: 0L,
+                                        author = screenContext.authorHandle,
+                                        caption = screenContext.captionSnippet,
+                                        audioTrack = screenContext.audioTrackName
+                                    )
                                 }
                             },
                             onStopHoverService = {
@@ -315,6 +303,40 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
             }
             y = if (fullScreen) 0 else bubbleYOffsetPx
         }
+    }
+
+    /**
+     * 1. While Instagram holds focus, run the Share -> Copy link automation.
+     * 2a. If InstaPin was tapped in the Android share screen, Instagram itself launches
+     *     ShareReceiverActivity with the exact URL - so we only hand over the board choice
+     *     and do NOT launch a second save request (prevents duplicate/Legacy pins).
+     * 2b. Otherwise launch ShareReceiverActivity, a focused foreground Activity, which is
+     *     the only place Android 10+ lets us read the copied link from the clipboard.
+     */
+    private suspend fun captureReelAndOpenSaveScreen(
+        preselectedBoardId: Long,
+        author: String,
+        caption: String,
+        audioTrack: String
+    ) {
+        ShareReceiverActivity.pendingFloatingSave = ShareReceiverActivity.PendingFloatingSave(
+            preselectedBoardId = preselectedBoardId,
+            author = author,
+            caption = caption,
+            audioTrack = audioTrack
+        )
+        val outcome = InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
+        if (outcome == ReelCaptureOutcome.SENT_TO_INSTAPIN_SHARE_TARGET) return
+
+        val actIntent = Intent(this, ShareReceiverActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra(ShareReceiverActivity.EXTRA_FROM_FLOATING_PIN, true)
+            putExtra(ShareReceiverActivity.EXTRA_PRESELECTED_BOARD_ID, preselectedBoardId)
+            putExtra(ShareReceiverActivity.EXTRA_AUTHOR_HANDLE, author)
+            putExtra(ShareReceiverActivity.EXTRA_CAPTION, caption)
+            putExtra(ShareReceiverActivity.EXTRA_AUDIO_TRACK, audioTrack)
+        }
+        startActivity(actIntent)
     }
 
     private fun updateWindowMode(fullScreen: Boolean, focusable: Boolean) {
