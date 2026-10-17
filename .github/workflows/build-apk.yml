@@ -7,6 +7,9 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
@@ -20,6 +23,18 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Ensure Deterministic Debug Signing Keystore
+        run: |
+          mkdir -p ~/.android
+          if [ -f "app/keystore/instapin-debug.keystore" ]; then
+            cp app/keystore/instapin-debug.keystore ~/.android/debug.keystore
+          else
+            keytool -genkey -v -keystore ~/.android/debug.keystore \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -28,11 +43,25 @@ jobs:
       - name: Run Unit Tests
         run: gradle testDebugUnitTest
 
-      - name: Assemble Moto G84 5G Debug APK
-        run: gradle assembleDebug
+      - name: Assemble Moto G84 5G APK
+        run: |
+          gradle assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk InstaPin-MotoG84.apk
 
-      - name: Upload InstaPin APK Artifact
+      - name: Upload InstaPin APK & Keystore Artifact
         uses: actions/upload-artifact@v4
         with:
           name: InstaPin-MotoG84-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            InstaPin-MotoG84.apk
+            ~/.android/debug.keystore
+
+      - name: Publish Latest APK to GitHub Releases for 1-Tap In-App Updater
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: InstaPin v1.0.${{ github.run_number }} (Moto G84 5G)
+          body: "Automated GitHub Actions APK build #${{ github.run_number }} for Moto G84 5G. Tap 'Download & Update' inside InstaPin's Moto G84 Setup tab to update in 1 tap."
+          files: InstaPin-MotoG84.apk
+          prerelease: false

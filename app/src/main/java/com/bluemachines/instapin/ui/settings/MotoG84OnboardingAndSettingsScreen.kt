@@ -20,15 +20,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessibilityNew
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -36,8 +39,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,9 +52,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.bluemachines.instapin.BuildConfig
 import com.bluemachines.instapin.data.local.UserSettings
+import com.bluemachines.instapin.data.remote.AppUpdaterService
+import com.bluemachines.instapin.data.remote.GitHubReleaseInfo
 import com.bluemachines.instapin.service.FloatingOverlayService
 import com.bluemachines.instapin.service.InstaPinAccessibilityService
+import kotlinx.coroutines.launch
 
 @Composable
 fun MotoG84OnboardingAndSettingsScreen(
@@ -59,12 +68,21 @@ fun MotoG84OnboardingAndSettingsScreen(
     onSaveCreatorNiche: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val hasOverlayPermission = Settings.canDrawOverlays(context)
     val accessibilityConnected by InstaPinAccessibilityService.isServiceConnected.collectAsState()
 
     var apiKeyInput by remember(settings.geminiApiKey) { mutableStateOf(settings.geminiApiKey) }
     var nicheInput by remember(settings.creatorNicheDescription) { mutableStateOf(settings.creatorNicheDescription) }
     var overlayRunning by remember { mutableStateOf(FloatingOverlayService.isRunning) }
+
+    // 1-Tap In-App GitHub Updater states
+    var latestRelease by remember { mutableStateOf<GitHubReleaseInfo?>(null) }
+    var updateStatusText by remember {
+        mutableStateOf("Installed: v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})")
+    }
+    var isDownloadingUpdate by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableIntStateOf(0) }
 
     Column(
         modifier = Modifier
@@ -73,6 +91,114 @@ fun MotoG84OnboardingAndSettingsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // 1-Tap GitHub Actions Over-The-Air Updater Card
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF181826)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.SystemUpdate,
+                        contentDescription = null,
+                        tint = Color(0xFF10B981),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "1-Tap In-App GitHub Updater",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        Text(
+                            text = updateStatusText,
+                            color = Color(0xFFA0A0B8),
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                if (isDownloadingUpdate) {
+                    LinearProgressIndicator(
+                        progress = { downloadProgress / 100f },
+                        color = Color(0xFF10B981),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "Downloading latest GitHub Actions APK... $downloadProgress%",
+                        color = Color(0xFF10B981),
+                        fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            coroutineScope.launch {
+                                updateStatusText = "Checking GitHub Releases..."
+                                AppUpdaterService.checkLatestRelease()
+                                    .onSuccess { info ->
+                                        latestRelease = info
+                                        updateStatusText = if (info.isNewerThanCurrent) {
+                                            "New update available: ${info.tagName} (${info.releaseName})"
+                                        } else {
+                                            "Latest GitHub release: ${info.tagName} (Installed: v${BuildConfig.VERSION_NAME})"
+                                        }
+                                    }
+                                    .onFailure { err ->
+                                        updateStatusText = "Check result: ${err.message}"
+                                    }
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Check GitHub", fontSize = 12.sp)
+                    }
+
+                    Button(
+                        enabled = !isDownloadingUpdate,
+                        onClick = {
+                            coroutineScope.launch {
+                                isDownloadingUpdate = true
+                                downloadProgress = 0
+                                val targetUrl = latestRelease?.apkDownloadUrl
+                                    ?: "https://github.com/unime1988/instapin-moto-g84/releases/latest/download/InstaPin-MotoG84.apk"
+                                AppUpdaterService.downloadAndTriggerInstall(
+                                    context = context,
+                                    apkUrl = targetUrl,
+                                    onProgressPercent = { pct -> downloadProgress = pct }
+                                ).onSuccess {
+                                    isDownloadingUpdate = false
+                                    updateStatusText = "Downloaded! Confirm 'Update' in Android prompt."
+                                }.onFailure { err ->
+                                    isDownloadingUpdate = false
+                                    updateStatusText = err.message ?: "Update failed"
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1.3f)
+                    ) {
+                        Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Download & Update", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
         // Moto G84 5G Hover Setup Card
         Card(
             shape = RoundedCornerShape(20.dp),
@@ -158,7 +284,7 @@ fun MotoG84OnboardingAndSettingsScreen(
                                 text = if (accessibilityConnected) {
                                     "Connected • Reading @author & caption live"
                                 } else {
-                                    "Detects Instagram & reads Reel author/caption"
+                                    "If greyed out on Moto G84: Settings -> Apps -> InstaPin -> ⋮ -> Allow restricted settings"
                                 },
                                 color = Color(0xFFA0A0B8),
                                 fontSize = 11.sp

@@ -14,8 +14,8 @@ android {
         applicationId = "com.bluemachines.instapin"
         minSdk = 29 // Android 10+; Moto G84 5G runs Android 13/14 (API 33/34)
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1) + 1
+        versionName = "1.0.${System.getenv("GITHUB_RUN_NUMBER") ?: "1"}"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
