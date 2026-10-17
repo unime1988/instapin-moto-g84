@@ -76,7 +76,13 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
         var isRunning: Boolean = false
             private set
 
-        fun start(context: Context) {
+        @Volatile
+        var manuallyPausedByUser: Boolean = false
+
+        fun start(context: Context, resetManualPause: Boolean = false) {
+            if (resetManualPause) {
+                manuallyPausedByUser = false
+            }
             if (!Settings.canDrawOverlays(context)) return
             val intent = Intent(context, FloatingOverlayService::class.java)
             runCatching {
@@ -89,6 +95,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
         }
 
         fun stop(context: Context) {
+            manuallyPausedByUser = true
             context.stopService(Intent(context, FloatingOverlayService::class.java))
         }
     }
@@ -158,6 +165,11 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                                 isQuickSheetExpanded = false
                                 updateWindowMode(fullScreen = false, focusable = false)
                             },
+                            onStopHoverService = {
+                                manuallyPausedByUser = true
+                                isQuickSheetExpanded = false
+                                stopSelf()
+                            },
                             onSavePin = { manualUrl, author, caption, boardIds, moodIds, notes, runPhase2 ->
                                 isQuickSheetExpanded = false
                                 updateWindowMode(fullScreen = false, focusable = false)
@@ -202,6 +214,10 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                                     captureSource = CaptureSource.LIVE_RADIAL_OVERLAY,
                                     runPhase2 = selectedBoard?.autoAnalyzePhase2 ?: false
                                 )
+                            },
+                            onStopHoverService = {
+                                manuallyPausedByUser = true
+                                stopSelf()
                             }
                         )
                     }
@@ -250,7 +266,11 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
             flags,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.CENTER_VERTICAL or Gravity.END
+            gravity = if (fullScreen) {
+                Gravity.CENTER
+            } else {
+                Gravity.CENTER_VERTICAL or Gravity.END
+            }
         }
     }
 

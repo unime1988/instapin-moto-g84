@@ -315,7 +315,7 @@ fun MotoG84OnboardingAndSettingsScreen(
                     Button(
                         onClick = {
                             if (Settings.canDrawOverlays(context)) {
-                                FloatingOverlayService.start(context)
+                                FloatingOverlayService.start(context, resetManualPause = true)
                                 overlayRunning = true
                             } else {
                                 openOverlaySettings(context)

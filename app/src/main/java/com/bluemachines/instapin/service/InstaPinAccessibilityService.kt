@@ -81,8 +81,11 @@ class InstaPinAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Automatically start the Floating Hover Bubble whenever the user opens Instagram!
-        if (!FloatingOverlayService.isRunning && Settings.canDrawOverlays(this)) {
+        // Automatically start the Floating Hover Bubble whenever the user opens Instagram (unless manually paused)
+        if (!FloatingOverlayService.isRunning &&
+            !FloatingOverlayService.manuallyPausedByUser &&
+            Settings.canDrawOverlays(this)
+        ) {
             FloatingOverlayService.start(this)
         }
 

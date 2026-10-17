@@ -21,16 +21,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -38,12 +43,14 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -90,8 +97,9 @@ fun parseHexColor(hex: String, fallback: Color = Color(0xFFE60023)): Color {
 
 /**
  * The Pinterest-style floating bubble + Hold-and-Slide Radial Fan overlay rendered over Instagram.
- * - Single Tap -> Opens Quick Save Multi-Board & Mood Sheet.
+ * - Single Tap -> Opens Compact Quick Save Card.
  * - Press & Hold -> Expands circular arc of Boards around your thumb; slide & release to save in 1 second!
+ * - Mini `✕` badge on the bubble -> Stops/hides the floating bubble anytime.
  */
 @Composable
 fun PinterestRadialOverlay(
@@ -99,7 +107,8 @@ fun PinterestRadialOverlay(
     isRightSide: Boolean = true,
     onRadialExpandChange: (Boolean) -> Unit = {},
     onSingleTapOpenSheet: () -> Unit,
-    onRadialBoardSelected: (Board?) -> Unit // null = AI Auto-Categorize
+    onRadialBoardSelected: (Board?) -> Unit, // null = AI Auto-Categorize
+    onStopHoverService: () -> Unit = {}
 ) {
     var isRadialExpanded by remember { mutableStateOf(false) }
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
@@ -108,7 +117,6 @@ fun PinterestRadialOverlay(
     val density = LocalDensity.current
     val radiusPx = with(density) { 126.dp.toPx() }
 
-    // Build radial targets: up to 5 pinned boards + 1 "AI Smart Sort" node
     val targets = remember(radialBoards, isRightSide) {
         val items = mutableListOf<Pair<Board?, Triple<String, String, Color>>>()
         items.add(null to Triple("AI Auto-Sort", "✨", Color(0xFF8B5CF6)))
@@ -116,7 +124,6 @@ fun PinterestRadialOverlay(
             items.add(b to Triple(b.name, b.emoji, parseHexColor(b.colorHex)))
         }
         val count = items.size
-        // Arc angles facing inward from the right or left screen edge
         val startAngleDeg = if (isRightSide) 105.0 else -75.0
         val endAngleDeg = if (isRightSide) 255.0 else 75.0
 
@@ -137,7 +144,7 @@ fun PinterestRadialOverlay(
     val containerModifier = if (isRadialExpanded) {
         Modifier.fillMaxSize()
     } else {
-        Modifier.size(width = 76.dp, height = 76.dp)
+        Modifier.size(width = 76.dp, height = 88.dp)
     }
 
     Box(
@@ -154,6 +161,10 @@ fun PinterestRadialOverlay(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.52f))
+                    .clickable {
+                        isRadialExpanded = false
+                        onRadialExpandChange(false)
+                    }
             )
         }
 
@@ -255,82 +266,109 @@ fun PinterestRadialOverlay(
                 }
             }
 
-            // Main Floating Pinterest Trigger Bubble
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(58.dp)
-                    .shadow(12.dp, CircleShape)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.linearGradient(
-                            colors = listOf(Color(0xFFE60023), Color(0xFFFF4B2B))
+            // Main Floating Pinterest Trigger Bubble + Small Top-Right Dismiss ('✕') Badge
+            Box(contentAlignment = Alignment.TopEnd) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .padding(top = 6.dp, end = 4.dp)
+                        .size(56.dp)
+                        .shadow(12.dp, CircleShape)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(Color(0xFFE60023), Color(0xFFFF4B2B))
+                            )
                         )
-                    )
-                    .border(2.5.dp, Color.White.copy(alpha = 0.95f), CircleShape)
-                    .pointerInput(targets) {
-                        detectTapGestures(
-                            onTap = {
-                                onSingleTapOpenSheet()
-                            }
-                        )
-                    }
-                    .pointerInput(targets) {
-                        detectDragGesturesAfterLongPress(
-                            onDragStart = {
-                                isRadialExpanded = true
-                                onRadialExpandChange(true)
-                                dragOffset = Offset.Zero
-                                hoveredIndex = -1
-                            },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                dragOffset += dragAmount
-                                val distance = hypot(dragOffset.x, dragOffset.y)
-                                if (distance > 36f) {
-                                    hoveredIndex = targets.indices.minByOrNull { idx ->
-                                        val item = targets[idx]
-                                        val targetX = (cos(item.angleRadians) * radiusPx).toFloat()
-                                        val targetY = (sin(item.angleRadians) * radiusPx).toFloat()
-                                        hypot(dragOffset.x - targetX, dragOffset.y - targetY)
-                                    } ?: -1
-                                } else {
+                        .border(2.5.dp, Color.White.copy(alpha = 0.95f), CircleShape)
+                        .pointerInput(targets) {
+                            detectTapGestures(
+                                onTap = {
+                                    onSingleTapOpenSheet()
+                                }
+                            )
+                        }
+                        .pointerInput(targets) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    isRadialExpanded = true
+                                    onRadialExpandChange(true)
+                                    dragOffset = Offset.Zero
+                                    hoveredIndex = -1
+                                },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    dragOffset += dragAmount
+                                    val distance = hypot(dragOffset.x, dragOffset.y)
+                                    if (distance > 36f) {
+                                        hoveredIndex = targets.indices.minByOrNull { idx ->
+                                            val item = targets[idx]
+                                            val targetX = (cos(item.angleRadians) * radiusPx).toFloat()
+                                            val targetY = (sin(item.angleRadians) * radiusPx).toFloat()
+                                            hypot(dragOffset.x - targetX, dragOffset.y - targetY)
+                                        } ?: -1
+                                    } else {
+                                        hoveredIndex = -1
+                                    }
+                                },
+                                onDragEnd = {
+                                    val selectedIdx = hoveredIndex
+                                    isRadialExpanded = false
+                                    onRadialExpandChange(false)
+                                    dragOffset = Offset.Zero
+                                    hoveredIndex = -1
+                                    if (selectedIdx in targets.indices) {
+                                        onRadialBoardSelected(targets[selectedIdx].board)
+                                    }
+                                },
+                                onDragCancel = {
+                                    isRadialExpanded = false
+                                    onRadialExpandChange(false)
+                                    dragOffset = Offset.Zero
                                     hoveredIndex = -1
                                 }
-                            },
-                            onDragEnd = {
-                                val selectedIdx = hoveredIndex
-                                isRadialExpanded = false
-                                onRadialExpandChange(false)
-                                dragOffset = Offset.Zero
-                                hoveredIndex = -1
-                                if (selectedIdx in targets.indices) {
-                                    onRadialBoardSelected(targets[selectedIdx].board)
-                                }
-                            },
-                            onDragCancel = {
-                                isRadialExpanded = false
-                                onRadialExpandChange(false)
-                                dragOffset = Offset.Zero
-                                hoveredIndex = -1
-                            }
+                            )
+                        }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PushPin,
+                        contentDescription = "InstaPin Hover Button",
+                        tint = Color.White,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+
+                // Small '✕' close badge on corner of the bubble so user can hide the bubble in 1 tap anytime
+                if (!isRadialExpanded) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1E1E2E))
+                            .border(1.dp, Color.White.copy(alpha = 0.8f), CircleShape)
+                            .clickable { onStopHoverService() }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Hide Bubble",
+                            tint = Color.White,
+                            modifier = Modifier.size(13.dp)
                         )
                     }
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PushPin,
-                    contentDescription = "InstaPin Hover Button",
-                    tint = Color.White,
-                    modifier = Modifier.size(28.dp)
-                )
+                }
             }
         }
     }
 }
 
 /**
- * Phase 1 Quick Save Sheet (shown when single-tapping the floating bubble or via Android Share Sheet).
- * Allows selecting MULTIPLE Boards, MULTIPLE Moods, custom note, and optional immediate Phase 2 Deep Analysis.
+ * Redesigned Compact & Safe Quick Save Overlay Sheet:
+ * - Never traps the screen:
+ *   1. Prominent Top Escape Bar with "Minimize to Pin" AND "✕ Close" AND "Turn Off Hover" buttons.
+ *   2. Tapping anywhere on the dark backdrop immediately minimizes back to the floating pin.
+ *   3. 1-Tap Instant Board Save (default): Tapping any Board chip IMMEDIATELY saves the Reel & minimizes!
+ *   4. Multi-Board / Moods / Note section is scrollable and has a sticky Top & Bottom Save button.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -341,6 +379,7 @@ fun QuickSaveOverlaySheet(
     boards: List<Board>,
     moods: List<MoodTag>,
     onDismiss: () -> Unit,
+    onStopHoverService: () -> Unit = onDismiss,
     onSavePin: (
         manualUrl: String,
         author: String,
@@ -356,6 +395,7 @@ fun QuickSaveOverlaySheet(
     var captionInput by remember(detectedCaption) { mutableStateOf(detectedCaption) }
     var notesInput by remember { mutableStateOf("") }
     var runPhase2Analysis by remember { mutableStateOf(false) }
+    var showAdvancedMultiSelect by remember { mutableStateOf(false) }
 
     val selectedBoardIds = remember { mutableStateListOf<Long>() }
     val selectedMoodIds = remember { mutableStateListOf<Long>() }
@@ -363,231 +403,367 @@ fun QuickSaveOverlaySheet(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.55f))
+            .background(Color.Black.copy(alpha = 0.50f))
             .clickable(onClick = onDismiss),
-        contentAlignment = Alignment.BottomCenter
+        contentAlignment = Alignment.Center
     ) {
         Card(
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF14141F)),
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxWidth(0.92f)
+                .heightIn(max = 560.dp)
+                .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
                 .clickable(enabled = false, onClick = {})
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(20.dp)
+                    .padding(16.dp)
             ) {
-                // Header
+                // ALWAYS-VISIBLE STICKY ESCAPE & HEADER BAR
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFE60023)),
-                            contentAlignment = Alignment.Center
-                        ) {
+                    // Minimize back to edge bubble button
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Minimize",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Minimize", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+
+                    // Turn Off Hover Completely button
+                    TextButton(onClick = onStopHoverService) {
+                        Icon(
+                            imageVector = Icons.Default.PowerSettingsNew,
+                            contentDescription = "Stop Hover",
+                            tint = Color(0xFFEF4444),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Hide Pin", color = Color(0xFFEF4444), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+
+                    // Big Red Close ('X') Circle
+                    Surface(
+                        onClick = onDismiss,
+                        shape = CircleShape,
+                        color = Color(0xFF2A2A3C),
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
                             Icon(
-                                imageVector = Icons.Default.PushPin,
-                                contentDescription = null,
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close",
                                 tint = Color.White,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
-                        Spacer(Modifier.width(10.dp))
-                        Column {
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // Title & Detected Creator Row
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFE60023)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PushPin,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Pin Instagram Reel",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        Text(
+                            text = if (authorInput.isNotBlank()) {
+                                "Detected @$authorInput • Tap any Board for 1-Tap Save!"
+                            } else {
+                                "Tap any Board below to save & close immediately"
+                            },
+                            color = Color(0xFF10B981),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+                HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+                Spacer(Modifier.height(10.dp))
+
+                // SCROLLABLE CONTENT AREA
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    if (!showAdvancedMultiSelect) {
+                        // FAST 1-TAP BOARD SAVE MODE (Default)
+                        Text(
+                            text = "Tap a Board to Save & Close Instantly:",
+                            color = Color(0xFFE0E0F0),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.height(8.dp))
+
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            boards.forEach { board ->
+                                Button(
+                                    onClick = {
+                                        // 1-TAP INSTANT SAVE & MINIMIZE!
+                                        onSavePin(
+                                            urlInput,
+                                            authorInput,
+                                            captionInput,
+                                            listOf(board.id),
+                                            emptyList(),
+                                            "",
+                                            board.autoAnalyzePhase2
+                                        )
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = parseHexColor(board.colorHex).copy(alpha = 0.88f)
+                                    ),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text(
+                                        text = "${board.emoji} ${board.name}",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(12.dp))
+
+                        // 1-Tap AI Auto-Sort Button
+                        Button(
+                            onClick = {
+                                onSavePin(
+                                    urlInput,
+                                    authorInput,
+                                    captionInput,
+                                    emptyList(),
+                                    emptyList(),
+                                    "",
+                                    runPhase2Analysis
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             Text(
-                                text = "Pin Instagram Reel",
+                                text = "✨ 1-Tap AI Auto-Board & Categorize",
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp
+                                fontSize = 13.sp
                             )
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+
+                        TextButton(
+                            onClick = { showAdvancedMultiSelect = true },
+                            modifier = Modifier.align(Alignment.CenterHorizontally)
+                        ) {
                             Text(
-                                text = if (authorInput.isNotBlank()) {
-                                    "Detected @$authorInput • Multi-Board & Mood Save"
-                                } else {
-                                    "Saves link pointer only (No video download)"
-                                },
+                                text = "+ Multi-Board, Mood Tags or Add Note",
                                 color = Color(0xFFA0A0B8),
                                 fontSize = 12.sp
                             )
                         }
-                    }
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
-                    }
-                }
-
-                Spacer(Modifier.height(14.dp))
-
-                // Select Multiple Boards
-                Text(
-                    text = "1. Select Boards (Multi-select or leave empty for AI Auto-Board)",
-                    color = Color(0xFFE0E0F0),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(Modifier.height(6.dp))
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    boards.forEach { board ->
-                        val isSelected = board.id in selectedBoardIds
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = {
-                                if (isSelected) selectedBoardIds.remove(board.id)
-                                else selectedBoardIds.add(board.id)
-                            },
-                            label = {
-                                Text("${board.emoji} ${board.name}")
-                            },
-                            leadingIcon = if (isSelected) {
-                                {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                            } else null,
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = parseHexColor(board.colorHex).copy(alpha = 0.85f),
-                                selectedLabelColor = Color.White,
-                                labelColor = Color(0xFFD0D0E0)
-                            )
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(12.dp))
-
-                // Select Moods
-                Text(
-                    text = "2. Assign Mood / Intent",
-                    color = Color(0xFFE0E0F0),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(Modifier.height(6.dp))
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    moods.forEach { mood ->
-                        val isSelected = mood.id in selectedMoodIds
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = {
-                                if (isSelected) selectedMoodIds.remove(mood.id)
-                                else selectedMoodIds.add(mood.id)
-                            },
-                            label = {
-                                Text("${mood.emoji} ${mood.name}")
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = parseHexColor(mood.colorHex).copy(alpha = 0.85f),
-                                selectedLabelColor = Color.White,
-                                labelColor = Color(0xFFD0D0E0)
-                            )
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(12.dp))
-
-                // Optional URL / Note override
-                OutlinedTextField(
-                    value = urlInput,
-                    onValueChange = { urlInput = it },
-                    label = { Text("Instagram Reel Link (auto-filled from Share/Clipboard)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(Modifier.height(8.dp))
-
-                OutlinedTextField(
-                    value = notesInput,
-                    onValueChange = { notesInput = it },
-                    label = { Text("Quick Note (Why did you like this video?)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(Modifier.height(10.dp))
-
-                // Phase 2 Toggle
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.AutoAwesome,
-                            contentDescription = null,
-                            tint = Color(0xFF8B5CF6),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Column {
+                    } else {
+                        // MULTI-SELECT BOARDS + MOODS + NOTE MODE
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = "Run Phase 2 Deep Video Breakdown Now",
-                                color = Color.White,
+                                text = "1. Select Multiple Boards",
+                                color = Color(0xFFE0E0F0),
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.SemiBold
                             )
-                            Text(
-                                text = "Extracts summary, hook, transcript & recreate script",
-                                color = Color(0xFFA0A0B8),
-                                fontSize = 11.sp
+                            TextButton(onClick = { showAdvancedMultiSelect = false }) {
+                                Text("Back to 1-Tap Mode", fontSize = 11.sp, color = Color(0xFF10B981))
+                            }
+                        }
+
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            boards.forEach { board ->
+                                val isSelected = board.id in selectedBoardIds
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        if (isSelected) selectedBoardIds.remove(board.id)
+                                        else selectedBoardIds.add(board.id)
+                                    },
+                                    label = { Text("${board.emoji} ${board.name}") },
+                                    leadingIcon = if (isSelected) {
+                                        {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    } else null,
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = parseHexColor(board.colorHex).copy(alpha = 0.85f),
+                                        selectedLabelColor = Color.White,
+                                        labelColor = Color(0xFFD0D0E0)
+                                    )
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+
+                        Text(
+                            text = "2. Assign Mood / Intent",
+                            color = Color(0xFFE0E0F0),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            moods.forEach { mood ->
+                                val isSelected = mood.id in selectedMoodIds
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        if (isSelected) selectedMoodIds.remove(mood.id)
+                                        else selectedMoodIds.add(mood.id)
+                                    },
+                                    label = { Text("${mood.emoji} ${mood.name}") },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = parseHexColor(mood.colorHex).copy(alpha = 0.85f),
+                                        selectedLabelColor = Color.White,
+                                        labelColor = Color(0xFFD0D0E0)
+                                    )
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = notesInput,
+                            onValueChange = { notesInput = it },
+                            label = { Text("Quick Note (Optional)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = urlInput,
+                            onValueChange = { urlInput = it },
+                            label = { Text("Instagram Link (Optional)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = Color(0xFF8B5CF6),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "Run Phase 2 Deep Analysis",
+                                    color = Color.White,
+                                    fontSize = 12.sp
+                                )
+                            }
+                            Switch(
+                                checked = runPhase2Analysis,
+                                onCheckedChange = { runPhase2Analysis = it }
                             )
                         }
                     }
-                    Switch(
-                        checked = runPhase2Analysis,
-                        onCheckedChange = { runPhase2Analysis = it }
-                    )
                 }
 
-                Spacer(Modifier.height(16.dp))
-
-                Button(
-                    onClick = {
-                        onSavePin(
-                            urlInput,
-                            authorInput,
-                            captionInput,
-                            selectedBoardIds.toList(),
-                            selectedMoodIds.toList(),
-                            notesInput,
-                            runPhase2Analysis
-                        )
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE60023)),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp)
-                ) {
-                    Text(
-                        text = if (selectedBoardIds.isEmpty()) {
-                            "✨ Smart Pin (AI Auto-Board + Metadata)"
-                        } else {
-                            "📌 Pin to ${selectedBoardIds.size} Board(s)"
+                // STICKY SAVE BUTTON AT BOTTOM FOR MULTI-SELECT MODE
+                if (showAdvancedMultiSelect) {
+                    Spacer(Modifier.height(10.dp))
+                    Button(
+                        onClick = {
+                            onSavePin(
+                                urlInput,
+                                authorInput,
+                                captionInput,
+                                selectedBoardIds.toList(),
+                                selectedMoodIds.toList(),
+                                notesInput,
+                                runPhase2Analysis
+                            )
                         },
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
-                    )
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE60023)),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(46.dp)
+                    ) {
+                        Text(
+                            text = if (selectedBoardIds.isEmpty()) {
+                                "✨ Save with AI Auto-Board"
+                            } else {
+                                "📌 Save to ${selectedBoardIds.size} Board(s) & Close"
+                            },
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                    }
                 }
             }
         }
