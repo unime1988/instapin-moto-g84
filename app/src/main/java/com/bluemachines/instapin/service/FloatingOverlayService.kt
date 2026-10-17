@@ -63,6 +63,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
 
     private var isQuickSheetExpanded by mutableStateOf(false)
     private var isFullScreenWindowMode by mutableStateOf(false)
+    private var lastAutoCapturedReelUrl by mutableStateOf<String?>(null)
     private var bubbleYOffsetPx: Int = 0
 
     companion object {
@@ -155,11 +156,9 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
 
                 if (shouldShowBubble) {
                     if (isQuickSheetExpanded) {
-                        val clipboardUrl = if (screenContext.isInstagramForeground) {
-                            readInstagramUrlFromClipboard() ?: screenContext.detectedUrlFromScreen
-                        } else {
-                            screenContext.detectedUrlFromScreen
-                        }
+                        val clipboardUrl = lastAutoCapturedReelUrl
+                            ?: readInstagramUrlFromClipboard()
+                            ?: screenContext.detectedUrlFromScreen
                         QuickSaveOverlaySheet(
                             detectedUrl = clipboardUrl,
                             detectedAuthor = screenContext.authorHandle,
@@ -174,6 +173,16 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                                 manuallyPausedByUser = true
                                 isQuickSheetExpanded = false
                                 stopSelf()
+                            },
+                            onAutoGrabReelLink = {
+                                isQuickSheetExpanded = false
+                                updateWindowMode(fullScreen = false, focusable = false)
+                                InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
+                                val grabbed = readInstagramUrlFromClipboard()
+                                lastAutoCapturedReelUrl = grabbed
+                                isQuickSheetExpanded = true
+                                updateWindowMode(fullScreen = true, focusable = true)
+                                grabbed
                             },
                             onSavePin = { manualUrl, author, caption, boardIds, moodIds, notes, runPhase2 ->
                                 isQuickSheetExpanded = false
@@ -201,8 +210,16 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                             },
                             onSingleTapOpenSheet = {
                                 vibrateTick()
-                                isQuickSheetExpanded = true
-                                updateWindowMode(fullScreen = true, focusable = true)
+                                lifecycleScope.launch {
+                                    // While Instagram is still the active window, auto-click Share -> Copy Link
+                                    // so the exact Reel video permalink (instagram.com/reel/...) is captured!
+                                    if (screenContext.isInstagramForeground) {
+                                        InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
+                                        lastAutoCapturedReelUrl = readInstagramUrlFromClipboard()
+                                    }
+                                    isQuickSheetExpanded = true
+                                    updateWindowMode(fullScreen = true, focusable = true)
+                                }
                             },
                             onRadialBoardSelected = { selectedBoard: Board? ->
                                 vibrateTick()
@@ -316,9 +333,12 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
         lifecycleScope.launch {
             var resolvedUrl = explicitUrl
             if (resolvedUrl.isNullOrBlank()) {
-                InstaPinAccessibilityService.triggerAutoCopyLinkIfPossible()
-                resolvedUrl = readInstagramUrlFromClipboard()
+                // Ensure our overlay does not hold window focus while Accessibility clicks Instagram's Share -> Copy Link
+                updateWindowMode(fullScreen = false, focusable = false)
+                InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
+                resolvedUrl = readInstagramUrlFromClipboard() ?: lastAutoCapturedReelUrl
             }
+            lastAutoCapturedReelUrl = null
 
             val savedPin = withContext(Dispatchers.IO) {
                 app.repository.saveOrUpdateInstagramPin(

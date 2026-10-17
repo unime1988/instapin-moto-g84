@@ -390,6 +390,7 @@ fun QuickSaveOverlaySheet(
     moods: List<MoodTag>,
     onDismiss: () -> Unit,
     onStopHoverService: () -> Unit = onDismiss,
+    onAutoGrabReelLink: suspend () -> String? = { null },
     onSavePin: (
         manualUrl: String,
         author: String,
@@ -509,10 +510,13 @@ fun QuickSaveOverlaySheet(
                             fontSize = 16.sp
                         )
                         Text(
-                            text = if (authorInput.isNotBlank()) {
-                                "Detected @$authorInput • Tap any Board for 1-Tap Save!"
-                            } else {
-                                "Tap any Board below to save & close immediately"
+                            text = when {
+                                urlInput.contains("/reel/", ignoreCase = true) || urlInput.contains("/p/", ignoreCase = true) ->
+                                    "✓ Exact Reel Video Link Captured • Opens directly to video!"
+                                authorInput.isNotBlank() ->
+                                    "Detected @$authorInput • Auto-capturing exact Reel link on save"
+                                else ->
+                                    "Tap any Board below to save exact Reel video link"
                             },
                             color = Color(0xFF10B981),
                             fontSize = 11.sp,

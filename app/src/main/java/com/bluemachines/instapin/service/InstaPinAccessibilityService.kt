@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,8 +24,8 @@ data class LiveInstagramScreenContext(
  *    starts `FloatingOverlayService` if it isn't already running!
  * 2. Reads visible text nodes from the active Instagram Reel screen to extract `@author_handle`,
  *    the visible caption, and audio track without modifying anything in Instagram.
- * 3. Can optionally click Instagram's "Share -> Copy link" button if the user triggers a 1-tap
- *    radial save and wants the exact Reel URL copied automatically.
+ * 3. Performs a 2-step automated "Share -> Copy link" accessibility click sequence so the
+ *    exact Reel video URL (`https://www.instagram.com/reel/...`) is captured instead of just the creator profile!
  */
 class InstaPinAccessibilityService : AccessibilityService() {
 
@@ -41,8 +42,9 @@ class InstaPinAccessibilityService : AccessibilityService() {
         @Volatile
         private var instance: InstaPinAccessibilityService? = null
 
-        fun triggerAutoCopyLinkIfPossible(): Boolean {
-            return instance?.attemptAutoCopyLinkGesture() ?: false
+        suspend fun triggerAutoCopyLinkAndWait(): Boolean {
+            val svc = instance ?: return false
+            return svc.attemptFullShareAndCopyLinkSequence()
         }
     }
 
@@ -58,7 +60,6 @@ class InstaPinAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val pkg = event?.packageName?.toString() ?: return
 
-        // Ignore transient system UI, keyboard, and our own overlay events so Instagram state stays active
         if (pkg == INSTAPIN_PACKAGE ||
             pkg == "com.android.systemui" ||
             pkg.contains("inputmethod") ||
@@ -81,7 +82,6 @@ class InstaPinAccessibilityService : AccessibilityService() {
             return
         }
 
-        // Automatically start the Floating Hover Bubble whenever the user opens Instagram (unless manually paused)
         if (!FloatingOverlayService.isRunning &&
             !FloatingOverlayService.manuallyPausedByUser &&
             Settings.canDrawOverlays(this)
@@ -104,7 +104,7 @@ class InstaPinAccessibilityService : AccessibilityService() {
             authorHandle = parsed.authorHandle.ifBlank { _screenContext.value.authorHandle },
             captionSnippet = parsed.captionSnippet.ifBlank { _screenContext.value.captionSnippet },
             audioTrackName = parsed.audioTrackName.ifBlank { _screenContext.value.audioTrackName },
-            detectedUrlFromScreen = parsed.detectedUrlFromScreen,
+            detectedUrlFromScreen = parsed.detectedUrlFromScreen ?: _screenContext.value.detectedUrlFromScreen,
             updatedAtMillis = System.currentTimeMillis()
         )
     }
@@ -195,18 +195,96 @@ class InstaPinAccessibilityService : AccessibilityService() {
         return cleaned.matches(Regex("""^[a-zA-Z0-9._]+$""")) && cleaned.any { it.isLetter() }
     }
 
-    private fun attemptAutoCopyLinkGesture(): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val copyNodes = root.findAccessibilityNodeInfosByText("Copy link")
-        val copyNode = copyNodes?.firstOrNull { it.isClickable || it.parent?.isClickable == true }
-        if (copyNode != null) {
-            return if (copyNode.isClickable) {
-                copyNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            } else {
-                copyNode.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+    /**
+     * 2-Step Automated Reel Permalink Capture:
+     * Step 1: If "Copy link" is already visible on screen, click it directly.
+     * Step 2: Otherwise, find Instagram's "Share" / "Send post" (paper-plane) button on the Reel,
+     *         click it, wait 450ms for the bottom share drawer to open, and click "Copy link"!
+     */
+    private suspend fun attemptFullShareAndCopyLinkSequence(): Boolean {
+        // Step 1: Check if "Copy link" is already visible
+        if (clickCopyLinkNodeIfVisible()) {
+            delay(220)
+            return true
+        }
+
+        // Step 2: Click Instagram's Share / Send Post paper-plane button on the Reel
+        val clickedShare = clickInstagramShareButton()
+        if (!clickedShare) return false
+
+        // Wait up to ~750ms (3 polls of 250ms) for Instagram's Share drawer with "Copy link" to appear
+        repeat(3) {
+            delay(260)
+            if (clickCopyLinkNodeIfVisible()) {
+                delay(220)
+                return true
             }
         }
         return false
+    }
+
+    private fun clickCopyLinkNodeIfVisible(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val copyLabels = listOf("Copy link", "Copy Link", "Copy")
+        for (label in copyLabels) {
+            val nodes = root.findAccessibilityNodeInfosByText(label)
+            val target = nodes?.firstOrNull { n ->
+                val txt = n.text?.toString().orEmpty()
+                val desc = n.contentDescription?.toString().orEmpty()
+                (txt.contains("Copy link", ignoreCase = true) || desc.contains("Copy link", ignoreCase = true)) &&
+                    (n.isClickable || n.parent?.isClickable == true || n.parent?.parent?.isClickable == true)
+            }
+            if (target != null) {
+                return clickNodeOrClickableAncestor(target)
+            }
+        }
+        return false
+    }
+
+    private fun clickInstagramShareButton(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        var shareCandidate: AccessibilityNodeInfo? = null
+
+        fun searchShare(node: AccessibilityNodeInfo?, depth: Int) {
+            if (node == null || depth > 25 || shareCandidate != null) return
+            val viewId = node.viewIdResourceName.orEmpty().lowercase()
+            val desc = node.contentDescription?.toString()?.lowercase().orEmpty()
+
+            val isShareViewId = viewId.contains("direct_share") ||
+                viewId.contains("clips_share") ||
+                viewId.contains("row_feed_button_share") ||
+                viewId.contains("share_button")
+
+            val isShareDesc = desc == "share" ||
+                desc == "send post" ||
+                desc.startsWith("share ") ||
+                desc.startsWith("send ")
+
+            if (isShareViewId || isShareDesc) {
+                shareCandidate = node
+                return
+            }
+
+            for (i in 0 until node.childCount) {
+                searchShare(node.getChild(i), depth + 1)
+            }
+        }
+
+        runCatching { searchShare(root, 0) }
+        return shareCandidate?.let { clickNodeOrClickableAncestor(it) } ?: false
+    }
+
+    private fun clickNodeOrClickableAncestor(node: AccessibilityNodeInfo): Boolean {
+        var current: AccessibilityNodeInfo? = node
+        var hops = 0
+        while (current != null && hops < 4) {
+            if (current.isClickable) {
+                return current.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            }
+            current = current.parent
+            hops++
+        }
+        return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     }
 
     override fun onInterrupt() = Unit
