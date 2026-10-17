@@ -48,3 +48,9 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 2. Tap **Enable** on **2. InstaPin Context Reader** (Accessibility Settings -> Installed Apps -> InstaPin -> Turn On).
 3. (Optional) Paste your **Google Gemini API Key** (`AIza...`) in the AI Configuration card and tap **Save AI Settings**.
 4. Tap **Start Hover Bubble** and open Instagram Reels!
+
+### Exact Reel Link Capture (Debugging)
+- No local Android SDK/adb on the Mac: verify builds via GitHub Actions (`curl https://api.github.com/repos/unime1988/instapin-moto-g84/actions/runs?per_page=1`), then download the release APK.
+- Android 10+ only lets the focused app read the clipboard, so clipboard reads happen in `ShareReceiverActivity` (on window focus), never in the overlay service.
+- Accessibility automation must never scroll or swipe the Reels feed (it advances to the next Reel). Only scroll containers holding share-sheet labels.
+- When capture fails on-device, ask the user for **Moto G84 Setup -> Last Reel Link Capture -> Copy diagnostics** — it lists the real Instagram labels/IDs at the failed step.
