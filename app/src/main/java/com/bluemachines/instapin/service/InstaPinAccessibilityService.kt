@@ -305,47 +305,46 @@ class InstaPinAccessibilityService : AccessibilityService() {
             }
             lastClickedShareRect = shareRect
 
-            var opened = false
-            var waits = 0
-            while (!opened && waits < 8) {
-                delay(250)
-                opened = isShareSheetOpen()
-                waits++
+            val opened = waitUntil(timeoutMs = 2_500L, pollMs = 100L) {
+                isShareSheetOpen()
             }
-            steps += "Share sheet opened" to opened
+            steps += "Share sheet opened (${System.currentTimeMillis() - startedAt}ms)" to opened
             if (!opened) {
                 publish("Tapped Share but Instagram's share sheet did not appear", recordScreenElements())
                 return ReelCaptureOutcome.FAILED
             }
         }
 
-        // Copy link: try, then scroll only the share-sheet row, up to 4 times
-        repeat(4) {
-            if (clickCopyLinkInShareSheet()) {
-                steps += "Copy link tap" to true
-                publish()
-                delay(350)
-                return ReelCaptureOutcome.COPIED_TO_CLIPBOARD
-            }
-            scrollShareSheetRowOnly()
-            delay(300)
+        // Playwright-style conditional wait: re-read the accessibility tree every 100ms and
+        // continue immediately when the exact Copy link node appears. The timeout is a maximum,
+        // not a mandatory delay.
+        var copied = waitUntil(timeoutMs = 1_500L, pollMs = 100L) {
+            clickCopyLinkInShareSheet()
         }
-        steps += "Copy link tap" to false
+        if (!copied && scrollShareSheetRowOnly()) {
+            copied = waitUntil(timeoutMs = 1_000L, pollMs = 100L) {
+                clickCopyLinkInShareSheet()
+            }
+        }
+        steps += "Copy link tap (${System.currentTimeMillis() - startedAt}ms)" to copied
+        if (copied) {
+            publish("Copy link tapped; opening focused InstaPin receiver")
+            return ReelCaptureOutcome.COPIED_TO_CLIPBOARD
+        }
 
         // Fallback: Share to… -> Android share screen -> Pin to Board (InstaPin)
         val elementsBeforeFallback = recordScreenElements()
         val openedAndroidShare = clickShareToOtherApps()
         steps += "Share to… tap" to openedAndroidShare
         if (openedAndroidShare) {
-            repeat(8) {
-                delay(300)
-                if (clickInstaPinShareTarget()) {
-                    steps += "InstaPin share target" to true
-                    publish("Sent the Reel to InstaPin through the Android share screen")
-                    return ReelCaptureOutcome.SENT_TO_INSTAPIN_SHARE_TARGET
-                }
+            val sentToInstaPin = waitUntil(timeoutMs = 2_500L, pollMs = 125L) {
+                clickInstaPinShareTarget()
             }
-            steps += "InstaPin share target" to false
+            steps += "InstaPin share target" to sentToInstaPin
+            if (sentToInstaPin) {
+                publish("Sent the Reel to InstaPin through the Android share screen")
+                return ReelCaptureOutcome.SENT_TO_INSTAPIN_SHARE_TARGET
+            }
         }
 
         publish(
@@ -354,6 +353,19 @@ class InstaPinAccessibilityService : AccessibilityService() {
             elementsBeforeFallback
         )
         return ReelCaptureOutcome.FAILED
+    }
+
+    private suspend fun waitUntil(
+        timeoutMs: Long,
+        pollMs: Long,
+        condition: () -> Boolean
+    ): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        do {
+            if (condition()) return true
+            delay(pollMs)
+        } while (System.currentTimeMillis() < deadline)
+        return condition()
     }
 
     private fun isInstagramActuallyForeground(): Boolean {

@@ -38,6 +38,21 @@ enum class FontScalePreset(val displayName: String, val multiplier: Float) {
     LARGE("Large Comfortable", 1.12f)
 }
 
+enum class ReelLinkCaptureMode(val displayName: String, val description: String) {
+    CLIPBOARD_FIRST(
+        "Clipboard-first (Stable)",
+        "You copy the Reel link first; InstaPin opens immediately and reads it."
+    ),
+    AUTOMATIC(
+        "Automatic (Experimental)",
+        "One tap: InstaPin waits for Instagram Share → Copy link, then opens the board chooser."
+    ),
+    INSTAGRAM_SHARE(
+        "Instagram Share (Most Reliable)",
+        "Use Instagram Share → Share to… → Pin to Board (InstaPin)."
+    )
+}
+
 data class UserSettings(
     val aiProvider: AiProviderType = AiProviderType.GEMINI,
     val geminiApiKey: String = "",
@@ -45,7 +60,7 @@ data class UserSettings(
     val scriptDurationSeconds: Int = 45,
     val scriptToneAndLanguage: String = "High-Retention Educational (English)",
     val autoShowBubbleOnInstagramOnly: Boolean = false,
-    val autoCopyLinkWithAccessibility: Boolean = true,
+    val reelLinkCaptureMode: ReelLinkCaptureMode = ReelLinkCaptureMode.CLIPBOARD_FIRST,
     val autoAnalyzePhase2OnSave: Boolean = false,
     val creatorNicheDescription: String = "Educational content creator in Video Editing, Trading, Health, and Career growth",
     val bubbleSideRight: Boolean = true,
@@ -67,7 +82,7 @@ class AppPreferences(private val context: Context) {
         private val KEY_SCRIPT_DURATION = intPreferencesKey("script_duration_sec")
         private val KEY_SCRIPT_TONE = stringPreferencesKey("script_tone_lang")
         private val KEY_AUTO_SHOW_IG_ONLY = booleanPreferencesKey("auto_show_ig_only")
-        private val KEY_AUTO_COPY_LINK = booleanPreferencesKey("auto_copy_link")
+        private val KEY_REEL_LINK_CAPTURE_MODE = stringPreferencesKey("reel_link_capture_mode")
         private val KEY_AUTO_ANALYZE_PHASE2 = booleanPreferencesKey("auto_analyze_phase2")
         private val KEY_CREATOR_NICHE = stringPreferencesKey("creator_niche")
         private val KEY_BUBBLE_RIGHT = booleanPreferencesKey("bubble_side_right")
@@ -99,6 +114,12 @@ class AppPreferences(private val context: Context) {
             FontScalePreset.valueOf(prefs[KEY_FONT_SCALE] ?: FontScalePreset.STANDARD.name)
         }.getOrDefault(FontScalePreset.STANDARD)
 
+        val captureMode = runCatching {
+            ReelLinkCaptureMode.valueOf(
+                prefs[KEY_REEL_LINK_CAPTURE_MODE] ?: ReelLinkCaptureMode.CLIPBOARD_FIRST.name
+            )
+        }.getOrDefault(ReelLinkCaptureMode.CLIPBOARD_FIRST)
+
         UserSettings(
             aiProvider = provider,
             geminiApiKey = decryptedApiKey,
@@ -106,7 +127,7 @@ class AppPreferences(private val context: Context) {
             scriptDurationSeconds = prefs[KEY_SCRIPT_DURATION] ?: 45,
             scriptToneAndLanguage = prefs[KEY_SCRIPT_TONE] ?: "High-Retention Educational (English)",
             autoShowBubbleOnInstagramOnly = prefs[KEY_AUTO_SHOW_IG_ONLY] ?: false,
-            autoCopyLinkWithAccessibility = prefs[KEY_AUTO_COPY_LINK] ?: true,
+            reelLinkCaptureMode = captureMode,
             autoAnalyzePhase2OnSave = prefs[KEY_AUTO_ANALYZE_PHASE2] ?: false,
             creatorNicheDescription = prefs[KEY_CREATOR_NICHE]
                 ?: "Educational content creator in Video Editing, Trading, Health, and Career growth",
@@ -192,12 +213,12 @@ class AppPreferences(private val context: Context) {
 
     suspend fun updateOverlayPreferences(
         autoShowOnInstagramOnly: Boolean,
-        autoCopyLinkWithAccessibility: Boolean,
+        reelLinkCaptureMode: ReelLinkCaptureMode,
         autoAnalyzePhase2OnSave: Boolean
     ) {
         context.dataStore.edit {
             it[KEY_AUTO_SHOW_IG_ONLY] = autoShowOnInstagramOnly
-            it[KEY_AUTO_COPY_LINK] = autoCopyLinkWithAccessibility
+            it[KEY_REEL_LINK_CAPTURE_MODE] = reelLinkCaptureMode.name
             it[KEY_AUTO_ANALYZE_PHASE2] = autoAnalyzePhase2OnSave
         }
     }

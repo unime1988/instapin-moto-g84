@@ -9,6 +9,7 @@ import com.bluemachines.instapin.data.local.AppPreferences
 import com.bluemachines.instapin.data.local.AppThemePreset
 import com.bluemachines.instapin.data.local.FeedLayoutMode
 import com.bluemachines.instapin.data.local.FontScalePreset
+import com.bluemachines.instapin.data.local.ReelLinkCaptureMode
 import com.bluemachines.instapin.data.local.UserSettings
 import com.bluemachines.instapin.data.local.entity.AuthorSummary
 import com.bluemachines.instapin.data.local.entity.Board
@@ -384,11 +385,11 @@ class MainViewModel(
 
     fun saveOverlayPrefs(
         autoShowIgOnly: Boolean,
-        autoCopyLink: Boolean,
+        reelLinkCaptureMode: ReelLinkCaptureMode,
         autoAnalyzePhase2: Boolean
     ) {
         viewModelScope.launch(Dispatchers.IO) {
-            preferences.updateOverlayPreferences(autoShowIgOnly, autoCopyLink, autoAnalyzePhase2)
+            preferences.updateOverlayPreferences(autoShowIgOnly, reelLinkCaptureMode, autoAnalyzePhase2)
         }
     }
 

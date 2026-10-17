@@ -74,6 +74,7 @@ import com.bluemachines.instapin.data.local.AiProviderType
 import com.bluemachines.instapin.data.local.AppThemePreset
 import com.bluemachines.instapin.data.local.FeedLayoutMode
 import com.bluemachines.instapin.data.local.FontScalePreset
+import com.bluemachines.instapin.data.local.ReelLinkCaptureMode
 import com.bluemachines.instapin.data.local.UserSettings
 import com.bluemachines.instapin.data.remote.ApiConnectionTestResult
 import com.bluemachines.instapin.data.remote.AppUpdaterService
@@ -93,7 +94,7 @@ fun MotoG84OnboardingAndSettingsScreen(
     onSaveVisualAppearance: (AppThemePreset, FeedLayoutMode, FontScalePreset) -> Unit = { _, _, _ -> },
     onExportBackup: ((String) -> Unit) -> Unit = {},
     onRestoreBackup: ((String) -> Unit) -> Unit = {},
-    onSaveOverlayPrefs: (Boolean, Boolean, Boolean) -> Unit
+    onSaveOverlayPrefs: (Boolean, ReelLinkCaptureMode, Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -1002,25 +1003,76 @@ fun MotoG84OnboardingAndSettingsScreen(
                     subtitle = "Automatically hides the floating pin when you switch to other apps",
                     checked = settings.autoShowBubbleOnInstagramOnly,
                     onCheckedChange = {
-                        onSaveOverlayPrefs(it, settings.autoCopyLinkWithAccessibility, settings.autoAnalyzePhase2OnSave)
+                        onSaveOverlayPrefs(it, settings.reelLinkCaptureMode, settings.autoAnalyzePhase2OnSave)
                     }
                 )
 
-                SettingToggleRow(
-                    title = "Auto-Click 'Copy Link' via Accessibility",
-                    subtitle = "Captures the exact Reel permalink when you trigger a radial save",
-                    checked = settings.autoCopyLinkWithAccessibility,
-                    onCheckedChange = {
-                        onSaveOverlayPrefs(settings.autoShowBubbleOnInstagramOnly, it, settings.autoAnalyzePhase2OnSave)
-                    }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "Reel Link Capture Mode",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
                 )
+                Spacer(Modifier.height(6.dp))
+                ReelLinkCaptureMode.entries.forEach { mode ->
+                    val selected = settings.reelLinkCaptureMode == mode
+                    Surface(
+                        onClick = {
+                            onSaveOverlayPrefs(
+                                settings.autoShowBubbleOnInstagramOnly,
+                                mode,
+                                settings.autoAnalyzePhase2OnSave
+                            )
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (selected) Color(0xFFE60023).copy(alpha = 0.16f) else Color.Transparent,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Text(
+                                text = if (selected) "●" else "○",
+                                color = if (selected) Color(0xFFE60023) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 17.sp
+                            )
+                            Spacer(Modifier.width(9.dp))
+                            Column {
+                                Text(
+                                    text = mode.displayName,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = mode.description,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+                }
+                if (settings.reelLinkCaptureMode == ReelLinkCaptureMode.AUTOMATIC) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "Experimental: waits for each Instagram screen state instead of using fixed delays. If a verified Share or Copy link control is not found, it stops safely and opens the manual fallback.",
+                        color = Color(0xFFFBBF24),
+                        fontSize = 11.sp
+                    )
+                }
 
+                Spacer(Modifier.height(8.dp))
                 SettingToggleRow(
                     title = "Auto-Run Phase 2 Analysis on Every Save",
                     subtitle = "Immediately generates summary, hook breakdown & recreate script",
                     checked = settings.autoAnalyzePhase2OnSave,
                     onCheckedChange = {
-                        onSaveOverlayPrefs(settings.autoShowBubbleOnInstagramOnly, settings.autoCopyLinkWithAccessibility, it)
+                        onSaveOverlayPrefs(settings.autoShowBubbleOnInstagramOnly, settings.reelLinkCaptureMode, it)
                     }
                 )
             }

@@ -35,6 +35,7 @@ import com.bluemachines.instapin.InstaPinApp
 import com.bluemachines.instapin.MainActivity
 import com.bluemachines.instapin.R
 import com.bluemachines.instapin.ShareReceiverActivity
+import com.bluemachines.instapin.data.local.ReelLinkCaptureMode
 import com.bluemachines.instapin.data.local.entity.Board
 import com.bluemachines.instapin.data.local.entity.CaptureSource
 import com.bluemachines.instapin.data.remote.InstagramMetadataExtractor
@@ -305,13 +306,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
         }
     }
 
-    /**
-     * Clipboard-first fast path:
-     * Launches ShareReceiverActivity IMMEDIATELY (0ms delay) so when the user already copied
-     * the Reel link in Instagram, the save card opens right away and reads the clipboard as
-     * soon as it gains window focus.
-     */
-    private fun captureReelAndOpenSaveScreen(
+    private suspend fun captureReelAndOpenSaveScreen(
         preselectedBoardId: Long,
         author: String,
         caption: String,
@@ -325,6 +320,18 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
             audioTrack = audioTrack,
             createdAtMillis = now
         )
+
+        val captureMode = (applicationContext as InstaPinApp).preferences.getSettings().reelLinkCaptureMode
+        if (captureMode == ReelLinkCaptureMode.AUTOMATIC) {
+            val outcome = InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
+            if (outcome == ReelCaptureOutcome.SENT_TO_INSTAPIN_SHARE_TARGET) return
+        } else if (captureMode == ReelLinkCaptureMode.INSTAGRAM_SHARE) {
+            Toast.makeText(
+                this,
+                "In Instagram tap Share → Share to… → Pin to Board (InstaPin)",
+                Toast.LENGTH_LONG
+            ).show()
+        }
 
         val actIntent = Intent(this, ShareReceiverActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
