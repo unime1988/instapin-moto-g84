@@ -96,6 +96,7 @@ fun MotoG84OnboardingAndSettingsScreen(
     val coroutineScope = rememberCoroutineScope()
     val hasOverlayPermission = Settings.canDrawOverlays(context)
     val accessibilityConnected by InstaPinAccessibilityService.isServiceConnected.collectAsState()
+    val lastCaptureReport by InstaPinAccessibilityService.lastCaptureReport.collectAsState()
 
     var selectedProvider by remember(settings.aiProvider) { mutableStateOf(settings.aiProvider) }
     var apiKeyInput by remember(settings.geminiApiKey) { mutableStateOf(settings.geminiApiKey) }
@@ -867,6 +868,50 @@ fun MotoG84OnboardingAndSettingsScreen(
                         Icon(Icons.Default.Stop, contentDescription = null)
                         Spacer(Modifier.width(4.dp))
                         Text("Stop")
+                    }
+                }
+
+                // Last Reel-Link Capture Diagnostics: shows exactly which automated step
+                // (Instagram on screen -> Share tap -> Copy link/InstaPin target) succeeded
+                // or failed the last time you pinned from Instagram, so a "Legacy Pin" is never a mystery.
+                lastCaptureReport?.let { report ->
+                    Spacer(Modifier.height(14.dp))
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (report.succeeded) Color(0xFF0B2E1F) else Color(0xFF3A2A10),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "Last Reel Link Capture",
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = report.toReadableLine(),
+                                color = if (report.succeeded) Color(0xFF34D399) else Color(0xFFFBBF24),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            if (report.note.isNotBlank()) {
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = report.note,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp
+                                )
+                            }
+                            if (!report.capturedUrl.isNullOrBlank()) {
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = report.capturedUrl,
+                                    color = Color(0xFF34D399),
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
                     }
                 }
             }

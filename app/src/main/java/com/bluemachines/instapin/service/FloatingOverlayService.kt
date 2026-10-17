@@ -150,6 +150,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                 val settings by app.preferences.settingsFlow.collectAsState(initial = com.bluemachines.instapin.data.local.UserSettings())
                 val screenContext by InstaPinAccessibilityService.screenContext.collectAsState()
                 val accessibilityConnected by InstaPinAccessibilityService.isServiceConnected.collectAsState()
+                val captureReport by InstaPinAccessibilityService.lastCaptureReport.collectAsState()
 
                 val shouldShowBubble = !settings.autoShowBubbleOnInstagramOnly ||
                     !accessibilityConnected ||
@@ -165,6 +166,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                             detectedUrl = clipboardUrl,
                             detectedAuthor = screenContext.authorHandle,
                             detectedCaption = screenContext.captionSnippet,
+                            captureStatusText = captureReport?.toReadableLine().orEmpty(),
                             boards = boards,
                             moods = moods,
                             onDismiss = {
@@ -213,10 +215,8 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                             onSingleTapOpenSheet = {
                                 vibrateTick()
                                 lifecycleScope.launch {
-                                    // Step 1: While Instagram holds focus, click Share -> Copy Link via Accessibility
-                                    if (screenContext.isInstagramForeground) {
-                                        InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
-                                    }
+                                    // Step 1: While Instagram holds focus, run Share -> InstaPin/Copy Link automation
+                                    InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
                                     // Step 2: Launch ShareReceiverActivity (a true foreground Translucent Activity)
                                     // Because Android 13/14 ONLY grants ClipboardManager read access to a foreground Activity
                                     // inside onWindowFocusChanged(true), launching ShareReceiverActivity guarantees
@@ -234,9 +234,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                             onRadialBoardSelected = { selectedBoard: Board? ->
                                 vibrateTick()
                                 lifecycleScope.launch {
-                                    if (screenContext.isInstagramForeground) {
-                                        InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
-                                    }
+                                    InstaPinAccessibilityService.triggerAutoCopyLinkAndWait()
                                     val actIntent = Intent(this@FloatingOverlayService, ShareReceiverActivity::class.java).apply {
                                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                                         putExtra(ShareReceiverActivity.EXTRA_FROM_FLOATING_PIN, true)

@@ -58,6 +58,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,6 +77,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bluemachines.instapin.data.local.entity.Board
 import com.bluemachines.instapin.data.local.entity.MoodTag
+import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -386,6 +388,7 @@ fun QuickSaveOverlaySheet(
     detectedUrl: String?,
     detectedAuthor: String,
     detectedCaption: String,
+    captureStatusText: String = "",
     boards: List<Board>,
     moods: List<MoodTag>,
     onDismiss: () -> Unit,
@@ -528,6 +531,73 @@ fun QuickSaveOverlaySheet(
                 Spacer(Modifier.height(10.dp))
                 HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
                 Spacer(Modifier.height(10.dp))
+
+                val hasExactReelUrl = urlInput.contains("/reel/", ignoreCase = true) ||
+                    urlInput.contains("/reels/", ignoreCase = true) ||
+                    urlInput.contains("/p/", ignoreCase = true) ||
+                    urlInput.contains("/tv/", ignoreCase = true) ||
+                    urlInput.contains("/share/", ignoreCase = true)
+
+                // EXACT-LINK WARNING + MANUAL GRAB/PASTE RESCUE ROW
+                // Shown whenever automation could not capture the exact /reel/... URL so the
+                // user always sees WHAT failed and can fix it in 1 tap instead of a Legacy pin.
+                if (!hasExactReelUrl) {
+                    val scope = rememberCoroutineScope()
+                    var grabbingLink by remember { mutableStateOf(false) }
+
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color(0xFF3A2A10),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text(
+                                text = "⚠ Exact Reel link not captured yet" +
+                                    if (captureStatusText.isNotBlank()) "\n$captureStatusText" else "",
+                                color = Color(0xFFFBBF24),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            OutlinedTextField(
+                                value = urlInput,
+                                onValueChange = { urlInput = it },
+                                label = { Text("Paste Reel link (or tap Grab)", fontSize = 11.sp) },
+                                singleLine = true,
+                                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    grabbingLink = true
+                                    scope.launch {
+                                        val grabbed = onAutoGrabReelLink()
+                                        if (!grabbed.isNullOrBlank()) urlInput = grabbed
+                                        grabbingLink = false
+                                    }
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = if (grabbingLink) "Reading clipboard..." else "📋 Grab Reel Link from Clipboard",
+                                    color = Color(0xFF10B981),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
+                            }
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = "Tip: in Instagram tap ✈ Share -> Copy link on the Reel, then tap Grab above.",
+                                color = Color(0xFF9CA3AF),
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+                }
 
                 // SCROLLABLE CONTENT AREA
                 Column(
