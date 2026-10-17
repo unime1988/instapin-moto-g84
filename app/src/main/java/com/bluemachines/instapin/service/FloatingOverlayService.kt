@@ -59,7 +59,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
 
     private lateinit var windowManager: WindowManager
     private var composeOverlayView: ComposeView? = null
-    private var layoutParams: WindowManager.LayoutParams? = null
+    private var windowLayoutParams: WindowManager.LayoutParams? = null
 
     private var isQuickSheetExpanded by mutableStateOf(false)
     private var isFullScreenWindowMode by mutableStateOf(false)
@@ -133,7 +133,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
 
         val app = applicationContext as InstaPinApp
         val params = createWindowLayoutParams(fullScreen = false, focusable = false)
-        layoutParams = params
+        windowLayoutParams = params
 
         val view = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@FloatingOverlayService)
@@ -227,7 +227,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                             onVerticalDragDelta = { deltaY ->
                                 bubbleYOffsetPx = (bubbleYOffsetPx + deltaY.toInt()).coerceIn(-650, 650)
                                 if (!isFullScreenWindowMode) {
-                                    layoutParams?.let { lp ->
+                                    windowLayoutParams?.let { lp ->
                                         lp.y = bubbleYOffsetPx
                                         composeOverlayView?.let { v ->
                                             runCatching { windowManager.updateViewLayout(v, lp) }
@@ -295,7 +295,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
         val view = composeOverlayView ?: return
         isFullScreenWindowMode = fullScreen
         val updatedParams = createWindowLayoutParams(fullScreen = fullScreen, focusable = focusable)
-        layoutParams = updatedParams
+        windowLayoutParams = updatedParams
         runCatching {
             windowManager.updateViewLayout(view, updatedParams)
         }
