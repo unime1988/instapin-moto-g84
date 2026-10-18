@@ -50,8 +50,17 @@ data class SaveTimingReport(
 data class BackupPinItem(
     val pin: VideoPin,
     val boardNames: List<String> = emptyList(),
+    val sectionNameByBoard: Map<String, String> = emptyMap(),
     val moodNames: List<String> = emptyList(),
     val analysis: VideoAnalysis? = null
+)
+
+@Serializable
+data class BackupBoardSection(
+    val boardName: String,
+    val name: String,
+    val emoji: String = "📂",
+    val sortOrder: Int = 0
 )
 
 @Serializable
@@ -59,6 +68,7 @@ data class FullDatabaseSnapshot(
     val exportedAtMillis: Long = System.currentTimeMillis(),
     val appVersion: String = BuildConfig.VERSION_NAME,
     val boards: List<Board> = emptyList(),
+    val sections: List<BackupBoardSection> = emptyList(),
     val moods: List<MoodTag> = emptyList(),
     val pins: List<BackupPinItem> = emptyList()
 )
@@ -479,18 +489,37 @@ class PinRepository(
      */
     suspend fun exportFullBackupSnapshotToFile(context: Context): File {
         val boards = boardDao.getAllBoards()
+        val sections = boards.flatMap { board -> boardDao.getSectionsForBoard(board.id) }
         val moods = boardDao.getAllMoodTags()
         val populatedPins = pinDao.getAllPopulatedPins()
+        val boardById = boards.associateBy { it.id }
+        val sectionById = sections.associateBy { it.id }
 
         val snapshot = FullDatabaseSnapshot(
             exportedAtMillis = System.currentTimeMillis(),
             appVersion = BuildConfig.VERSION_NAME,
             boards = boards,
+            sections = sections.mapNotNull { section ->
+                boardById[section.boardId]?.let { board ->
+                    BackupBoardSection(
+                        boardName = board.name,
+                        name = section.name,
+                        emoji = section.emoji,
+                        sortOrder = section.sortOrder
+                    )
+                }
+            },
             moods = moods,
             pins = populatedPins.map { item ->
+                val boardRefs = pinDao.getBoardRefsForPin(item.pin.id)
                 BackupPinItem(
                     pin = item.pin,
                     boardNames = item.boards.map { it.name },
+                    sectionNameByBoard = boardRefs.mapNotNull { ref ->
+                        val boardName = boardById[ref.boardId]?.name
+                        val sectionName = ref.sectionId?.let(sectionById::get)?.name
+                        if (boardName != null && sectionName != null) boardName to sectionName else null
+                    }.toMap(),
                     moodNames = item.moods.map { it.name },
                     analysis = item.analysis
                 )
@@ -515,6 +544,21 @@ class PinRepository(
         snapshot.moods.forEach { boardDao.insertMoodTag(it.copy(id = 0)) }
 
         val allBoards = boardDao.getAllBoards()
+        snapshot.sections.forEach { savedSection ->
+            allBoards.firstOrNull { it.name.equals(savedSection.boardName, ignoreCase = true) }?.let { board ->
+                boardDao.insertSection(
+                    BoardSection(
+                        boardId = board.id,
+                        name = savedSection.name,
+                        emoji = savedSection.emoji,
+                        sortOrder = savedSection.sortOrder
+                    )
+                )
+            }
+        }
+        val sectionsByBoardId = allBoards.associate { board ->
+            board.id to boardDao.getSectionsForBoard(board.id)
+        }
         val allMoods = boardDao.getAllMoodTags()
         var restoredCount = 0
 
@@ -522,8 +566,16 @@ class PinRepository(
             val existing = pinDao.getPinByShortcode(item.pin.shortcode)
             val pinId = existing?.id ?: pinDao.insertPin(item.pin.copy(id = 0))
             item.boardNames.forEach { bName ->
-                allBoards.firstOrNull { it.name.equals(bName, ignoreCase = true) }?.let { b ->
-                    pinDao.insertPinBoardCrossRef(PinBoardCrossRef(pinId = pinId, boardId = b.id))
+                allBoards.firstOrNull { it.name.equals(bName, ignoreCase = true) }?.let { board ->
+                    val sectionName = item.sectionNameByBoard.entries
+                        .firstOrNull { it.key.equals(bName, ignoreCase = true) }
+                        ?.value
+                    val sectionId = sectionsByBoardId[board.id]
+                        ?.firstOrNull { it.name.equals(sectionName, ignoreCase = true) }
+                        ?.id
+                    pinDao.insertPinBoardCrossRef(
+                        PinBoardCrossRef(pinId = pinId, boardId = board.id, sectionId = sectionId)
+                    )
                 }
             }
             item.moodNames.forEach { mName ->

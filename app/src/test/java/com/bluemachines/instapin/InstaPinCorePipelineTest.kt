@@ -1,8 +1,15 @@
 package com.bluemachines.instapin
 
+import com.bluemachines.instapin.data.local.entity.Board
+import com.bluemachines.instapin.data.local.entity.VideoPin
 import com.bluemachines.instapin.data.remote.GeminiAiService
 import com.bluemachines.instapin.data.remote.InstagramExportJsonParser
 import com.bluemachines.instapin.data.remote.InstagramMetadataExtractor
+import com.bluemachines.instapin.data.repository.BackupBoardSection
+import com.bluemachines.instapin.data.repository.BackupPinItem
+import com.bluemachines.instapin.data.repository.FullDatabaseSnapshot
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -112,5 +119,52 @@ class InstaPinCorePipelineTest {
         org.junit.Assert.assertFalse(InstagramMetadataExtractor.isTrustedInstagramUrl("http://www.instagram.com/reel/C9AbCdEf123/"))
         org.junit.Assert.assertFalse(InstagramMetadataExtractor.isTrustedInstagramUrl("https://evil.example.com/instagram.com/reel/123"))
         org.junit.Assert.assertFalse(InstagramMetadataExtractor.isTrustedInstagramUrl("http://169.254.169.254/latest/meta-data/"))
+    }
+
+    @Test
+    fun `backup snapshot preserves board sections and Pin section assignments`() {
+        val snapshot = FullDatabaseSnapshot(
+            boards = listOf(Board(id = 1, name = "Video Editing")),
+            sections = listOf(
+                BackupBoardSection(
+                    boardName = "Video Editing",
+                    name = "CapCut",
+                    emoji = "📂",
+                    sortOrder = 2
+                )
+            ),
+            pins = listOf(
+                BackupPinItem(
+                    pin = VideoPin(
+                        id = 7,
+                        instagramUrl = "https://www.instagram.com/reel/BackupTest/",
+                        shortcode = "BackupTest"
+                    ),
+                    boardNames = listOf("Video Editing"),
+                    sectionNameByBoard = mapOf("Video Editing" to "CapCut")
+                )
+            )
+        )
+        val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
+        val restored = json.decodeFromString<FullDatabaseSnapshot>(json.encodeToString(snapshot))
+
+        assertEquals("CapCut", restored.sections.single().name)
+        assertEquals(2, restored.sections.single().sortOrder)
+        assertEquals("CapCut", restored.pins.single().sectionNameByBoard["Video Editing"])
+    }
+
+    @Test
+    fun `older backup without sections remains restorable`() {
+        val oldBackup = """
+            {
+              "boards": [],
+              "moods": [],
+              "pins": []
+            }
+        """.trimIndent()
+        val restored = Json { ignoreUnknownKeys = true }.decodeFromString<FullDatabaseSnapshot>(oldBackup)
+
+        assertTrue(restored.sections.isEmpty())
+        assertTrue(restored.pins.isEmpty())
     }
 }

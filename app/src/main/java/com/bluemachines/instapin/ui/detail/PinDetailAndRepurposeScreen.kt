@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -549,7 +550,11 @@ fun PinDetailAndRepurposeScreen(
             onDismissRequest = { showMoveDialog = false },
             title = { Text("Move Pin") },
             text = {
-                Column {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
                     Text("From board", color = Color(0xFFA0A0B8), fontSize = 12.sp)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         populatedPin.boards.forEach { board ->
@@ -626,7 +631,11 @@ fun PinDetailAndRepurposeScreen(
             onDismissRequest = { showCopyDialog = false },
             title = { Text("Add Pin to Another Board") },
             text = {
-                Column {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
                     Text(
                         "The Pin remains in its current board(s).",
                         color = Color(0xFFA0A0B8),
@@ -691,14 +700,20 @@ fun PinDetailAndRepurposeScreen(
 
     if (showSectionDialog) {
         var selectedBoardId by remember(pin.id) { mutableStateOf(populatedPin.boards.firstOrNull()?.id) }
-        var selectedSectionId by remember(pin.id) { mutableStateOf<Long?>(null) }
+        var selectedSectionId by remember(pin.id) {
+            mutableStateOf(populatedPin.sections.firstOrNull { it.boardId == selectedBoardId }?.id)
+        }
         val boardSections = allSections.filter { it.boardId == selectedBoardId }
 
         AlertDialog(
             onDismissRequest = { showSectionDialog = false },
             title = { Text("Assign to Section") },
             text = {
-                Column {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
                     Text("Board", color = Color(0xFFA0A0B8), fontSize = 12.sp)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         populatedPin.boards.forEach { board ->
@@ -706,7 +721,9 @@ fun PinDetailAndRepurposeScreen(
                                 selected = selectedBoardId == board.id,
                                 onClick = {
                                     selectedBoardId = board.id
-                                    selectedSectionId = null
+                                    selectedSectionId = populatedPin.sections
+                                        .firstOrNull { it.boardId == board.id }
+                                        ?.id
                                 },
                                 label = { Text("${board.emoji} ${board.name}", fontSize = 11.sp) }
                             )
