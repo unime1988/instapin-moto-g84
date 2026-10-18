@@ -122,6 +122,7 @@ class MainActivity : ComponentActivity() {
                 var selectedPinIdForDetail by remember { mutableStateOf<Long?>(null) }
                 var selectedBoardIdForDetail by remember { mutableStateOf<Long?>(null) }
                 var showAddPinSheet by remember { mutableStateOf(false) }
+                var showCreateBoardDialog by remember { mutableStateOf(false) }
 
                 val activeDetailPin = remember(selectedPinIdForDetail, allPins) {
                     allPins.firstOrNull { it.pin.id == selectedPinIdForDetail }
@@ -214,14 +215,22 @@ class MainActivity : ComponentActivity() {
                             )
                         },
                         floatingActionButton = {
-                            if (currentBottomTab == 0 || currentBottomTab == 1) {
-                                FloatingActionButton(
+                            when (currentBottomTab) {
+                                0 -> FloatingActionButton(
                                     onClick = { showAddPinSheet = true },
                                     containerColor = Color(0xFFE60023),
                                     contentColor = Color.White
                                 ) {
                                     Icon(Icons.Default.Add, contentDescription = "Pin Instagram Link")
                                 }
+                                1 -> FloatingActionButton(
+                                    onClick = { showCreateBoardDialog = true },
+                                    containerColor = Color(0xFFE60023),
+                                    contentColor = Color.White
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = "Create New Board")
+                                }
+                                else -> Unit
                             }
                         },
                         bottomBar = {
@@ -315,7 +324,9 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onCreateBoard = viewModel::createBoard,
                                     onUpdateBoard = viewModel::updateBoard,
-                                    onToggleBoardQuickSave = viewModel::setBoardQuickSaveVisibility
+                                    onToggleBoardQuickSave = viewModel::setBoardQuickSaveVisibility,
+                                    showCreateDialog = showCreateBoardDialog,
+                                    onDismissCreateDialog = { showCreateBoardDialog = false }
                                 )
 
                                 2 -> Phase3HistoricalImportScreen(

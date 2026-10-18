@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -701,23 +702,22 @@ fun BoardsGridScreen(
     onDomainClick: (String) -> Unit,
     onCreateBoard: (name: String, emoji: String, colorHex: String, desc: String, pinRadial: Boolean, autoPhase2: Boolean) -> Unit,
     onUpdateBoard: (board: Board) -> Unit,
-    onToggleBoardQuickSave: (boardId: Long, visible: Boolean) -> Unit
+    onToggleBoardQuickSave: (boardId: Long, visible: Boolean) -> Unit,
+    showCreateDialog: Boolean,
+    onDismissCreateDialog: () -> Unit
 ) {
-    var showCreateDialog by remember { mutableStateOf(false) }
     var editingBoard by remember { mutableStateOf<Board?>(null) }
     val quickBoardCount = boardsWithCount.count { it.board.isPinnedToRadial }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxSize()
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Column(modifier = Modifier.padding(bottom = 2.dp)) {
                 Text(
                     text = "Your Pinterest Boards",
                     color = MaterialTheme.colorScheme.onBackground,
@@ -725,131 +725,115 @@ fun BoardsGridScreen(
                     fontSize = 20.sp
                 )
                 Text(
-                    text = "Choose up to 6 boards for the Save Reel quick-save row ($quickBoardCount/6 selected)",
+                    text = "Choose up to 6 boards for Save Reel ($quickBoardCount/6 selected)",
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                    fontSize = 12.sp
+                    fontSize = 12.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
-            }
-            Button(
-                onClick = { showCreateDialog = true },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE60023)),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("New Board", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
             }
         }
 
-        Spacer(Modifier.height(14.dp))
-
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(2),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.weight(1f)
-        ) {
-            items(boardsWithCount, key = { it.board.id }) { item ->
-                val board = item.board
-                val baseColor = parseHexColor(board.colorHex)
-                Card(
-                    onClick = { onBoardClick(board.id) },
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(74.dp)
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(baseColor.copy(alpha = 0.85f), baseColor.copy(alpha = 0.35f))
-                                    )
+        items(boardsWithCount, key = { it.board.id }) { item ->
+            val board = item.board
+            val baseColor = parseHexColor(board.colorHex)
+            Card(
+                onClick = { onBoardClick(board.id) },
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(74.dp)
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(baseColor.copy(alpha = 0.85f), baseColor.copy(alpha = 0.35f))
                                 )
-                                .padding(12.dp)
+                            )
+                            .padding(12.dp)
+                    ) {
+                        Text(
+                            text = board.emoji,
+                            fontSize = 28.sp,
+                            modifier = Modifier.align(Alignment.CenterStart)
+                        )
+                        Surface(
+                            color = Color.Black.copy(alpha = 0.45f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.align(Alignment.TopEnd)
                         ) {
                             Text(
-                                text = board.emoji,
-                                fontSize = 28.sp,
-                                modifier = Modifier.align(Alignment.CenterStart)
-                            )
-                            Surface(
-                                color = Color.Black.copy(alpha = 0.45f),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.align(Alignment.TopEnd)
-                            ) {
-                                Text(
-                                    text = "${item.pinCount} Pins",
-                                    color = Color.White,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                )
-                            }
-                        }
-
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(
-                                text = board.name,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                text = board.description.ifBlank { "Tap to browse saved Reels" },
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                text = "${item.pinCount} Pins",
+                                color = Color.White,
                                 fontSize = 11.sp,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                             )
-                            Spacer(Modifier.height(6.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Checkbox(
-                                            checked = board.isPinnedToRadial,
-                                            enabled = board.isPinnedToRadial || quickBoardCount < 6,
-                                            onCheckedChange = { checked ->
-                                                onToggleBoardQuickSave(board.id, checked)
-                                            }
-                                        )
-                                        Text(
-                                            text = "Save Reel",
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                    }
-                                    if (board.autoAnalyzePhase2) {
-                                        Text(
-                                            text = "✨ Auto-Phase 2",
-                                            color = Color(0xFFA78BFA),
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            modifier = Modifier.padding(start = 12.dp)
-                                        )
-                                    }
-                                }
-                                IconButton(
-                                    onClick = { editingBoard = board },
-                                    modifier = Modifier.size(30.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = "Edit ${board.name}",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
+                        }
+                    }
+
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            text = board.name,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = board.description.ifBlank { "Tap to browse saved Reels" },
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                            fontSize = 11.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(
+                                        checked = board.isPinnedToRadial,
+                                        enabled = board.isPinnedToRadial || quickBoardCount < 6,
+                                        onCheckedChange = { checked ->
+                                            onToggleBoardQuickSave(board.id, checked)
+                                        }
+                                    )
+                                    Text(
+                                        text = "Save Reel",
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold
                                     )
                                 }
+                                if (board.autoAnalyzePhase2) {
+                                    Text(
+                                        text = "✨ Auto-Phase 2",
+                                        color = Color(0xFFA78BFA),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.padding(start = 12.dp)
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = { editingBoard = board },
+                                modifier = Modifier.size(30.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit ${board.name}",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
                             }
                         }
                     }
@@ -858,26 +842,29 @@ fun BoardsGridScreen(
         }
 
         if (authors.isNotEmpty()) {
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = "Top Saved Creators (@Author)",
-                color = MaterialTheme.colorScheme.onBackground,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp
-            )
-            Spacer(Modifier.height(6.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                authors.forEach { a ->
-                    OutlinedButton(
-                        onClick = { onAuthorClick(a.authorHandle) },
-                        shape = RoundedCornerShape(12.dp)
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column(modifier = Modifier.padding(top = 2.dp)) {
+                    Text(
+                        text = "Top Saved Creators (@Author)",
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("@${a.authorHandle} (${a.videoCount})", fontSize = 12.sp)
+                        authors.forEach { a ->
+                            OutlinedButton(
+                                onClick = { onAuthorClick(a.authorHandle) },
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("@${a.authorHandle} (${a.videoCount})", fontSize = 12.sp)
+                            }
+                        }
                     }
                 }
             }
@@ -892,7 +879,7 @@ fun BoardsGridScreen(
         var autoPhase2 by remember { mutableStateOf(true) }
 
         AlertDialog(
-            onDismissRequest = { showCreateDialog = false },
+            onDismissRequest = onDismissCreateDialog,
             title = { Text("Create New Board") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -939,7 +926,7 @@ fun BoardsGridScreen(
                                 pinRadial && quickBoardCount < 6,
                                 autoPhase2
                             )
-                            showCreateDialog = false
+                            onDismissCreateDialog()
                         }
                     }
                 ) {
@@ -947,7 +934,7 @@ fun BoardsGridScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showCreateDialog = false }) {
+                TextButton(onClick = onDismissCreateDialog) {
                     Text("Cancel")
                 }
             }
