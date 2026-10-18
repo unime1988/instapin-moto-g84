@@ -114,6 +114,7 @@ class ShareReceiverActivity : ComponentActivity() {
                     // Explicit user tap: accept whatever Reel link is on the clipboard.
                     readClipboardInstagramUrl(requireFresh = false)?.also { capturedInstagramUrl = it }
                 },
+                onCreateBoard = { name -> app.repository.createQuickSaveBoard(name) },
                 onSavePin = { manualUrl, author, caption, boardIds, moodIds, notes, runPhase2 ->
                     savePinAndFinish(
                         rawUrl = manualUrl.trim().ifBlank { capturedInstagramUrl },

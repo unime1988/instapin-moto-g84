@@ -797,54 +797,102 @@
 
       <!-- TAB 1: BOARDS GRID -->
       <div class="screen-body" id="tab-1" style="display:none;">
-        <h3 style="font-size:17px;margin-bottom:4px;">Your Pinterest Boards</h3>
-        <p style="font-size:11.5px;color:var(--text-muted);margin-bottom:12px;">Boards marked 📌 appear in your Hold-and-Slide Radial Menu</p>
-        <div class="masonry-grid">
-          <div class="pin-card" onclick="switchTab(0)">
-            <div class="pin-cover" style="height:76px;background:linear-gradient(135deg,#E60023,#990017);">
-              <span style="font-size:24px;">🎬</span>
-              <span class="domain-pill">14 Pins</span>
+        <div id="boardsGridView">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+            <div>
+              <h3 style="font-size:17px;margin-bottom:2px;">Your Pinterest Boards</h3>
+              <p style="font-size:11.5px;color:var(--text-muted);">Choose up to 6 boards for Save Reel (5/6 selected)</p>
             </div>
-            <div class="pin-body">
-              <div class="pin-subject">Video Editing</div>
-              <div class="pin-caption">Transitions, CapCut/Premiere, color grading & hooks</div>
-              <span style="color:#10B981;font-size:10px;font-weight:700;">📌 Radial • ✨ Auto-AI</span>
+            <button class="ctrl-btn active" onclick="showToast('New Board dialog')">+ New Board</button>
+          </div>
+          <div class="masonry-grid" style="margin-top:12px;">
+            <div class="pin-card" onclick="showBoardDetail('Video Editing','🎬')">
+              <div class="pin-cover" style="height:76px;background:linear-gradient(135deg,#E60023,#990017);">
+                <span style="font-size:24px;">🎬</span>
+                <span class="domain-pill">14 Pins</span>
+              </div>
+              <div class="pin-body">
+                <div class="pin-subject">Video Editing</div>
+                <div class="pin-caption">Transitions, CapCut/Premiere, color grading & hooks</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+                  <label style="font-size:10px;font-weight:700;color:#10B981;" onclick="event.stopPropagation()"><input type="checkbox" checked /> Save Reel</label>
+                  <button class="ctrl-btn" style="padding:3px 6px;font-size:10px;" onclick="event.stopPropagation();showToast('Edit Video Editing board')">✎</button>
+                </div>
+                <span style="color:#A78BFA;font-size:10px;font-weight:700;">✨ Auto-AI</span>
+              </div>
+            </div>
+
+            <div class="pin-card" onclick="showBoardDetail('Trading','📈')">
+              <div class="pin-cover" style="height:76px;background:linear-gradient(135deg,#10B981,#047857);">
+                <span style="font-size:24px;">📈</span>
+                <span class="domain-pill">19 Pins</span>
+              </div>
+              <div class="pin-body">
+                <div class="pin-subject">Trading</div>
+                <div class="pin-caption">Price action, options, chart patterns & psychology</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+                  <label style="font-size:10px;font-weight:700;color:#10B981;" onclick="event.stopPropagation()"><input type="checkbox" checked /> Save Reel</label>
+                  <button class="ctrl-btn" style="padding:3px 6px;font-size:10px;" onclick="event.stopPropagation();showToast('Edit Trading board')">✎</button>
+                </div>
+                <span style="color:#A78BFA;font-size:10px;font-weight:700;">✨ Auto-AI</span>
+              </div>
+            </div>
+
+            <div class="pin-card" onclick="showBoardDetail('AI & Tech Tools','🤖')">
+              <div class="pin-cover" style="height:76px;background:linear-gradient(135deg,#8B5CF6,#5B21B6);">
+                <span style="font-size:24px;">🤖</span>
+                <span class="domain-pill">11 Pins</span>
+              </div>
+              <div class="pin-body">
+                <div class="pin-subject">AI & Tech Tools</div>
+                <div class="pin-caption">Agents, prompts, coding workflows & SaaS</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+                  <label style="font-size:10px;font-weight:700;color:#10B981;" onclick="event.stopPropagation()"><input type="checkbox" checked /> Save Reel</label>
+                  <button class="ctrl-btn" style="padding:3px 6px;font-size:10px;" onclick="event.stopPropagation();showToast('Edit AI & Tech Tools board')">✎</button>
+                </div>
+                <span style="color:#A78BFA;font-size:10px;font-weight:700;">✨ Auto-AI</span>
+              </div>
+            </div>
+
+            <div class="pin-card" onclick="showBoardDetail('Freelance Ideas','💡')">
+              <div class="pin-cover" style="height:76px;background:linear-gradient(135deg,#6366F1,#312E81);">
+                <span style="font-size:24px;">�</span>
+                <span class="domain-pill">7 Pins</span>
+              </div>
+              <div class="pin-body">
+                <div class="pin-subject">Freelance Ideas</div>
+                <div class="pin-caption">Client outreach, portfolio ideas & pricing</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+                  <label style="font-size:10px;font-weight:700;color:var(--text-muted);" onclick="event.stopPropagation()"><input type="checkbox" /> Save Reel</label>
+                  <button class="ctrl-btn" style="padding:3px 6px;font-size:10px;" onclick="event.stopPropagation();showToast('Edit Freelance Ideas board')">✎</button>
+                </div>
+              </div>
             </div>
           </div>
+        </div>
 
-          <div class="pin-card" onclick="switchTab(0)">
-            <div class="pin-cover" style="height:76px;background:linear-gradient(135deg,#10B981,#047857);">
-              <span style="font-size:24px;">📈</span>
-              <span class="domain-pill">19 Pins</span>
-            </div>
-            <div class="pin-body">
-              <div class="pin-subject">Trading</div>
-              <div class="pin-caption">Price action, options, chart patterns & psychology</div>
-              <span style="color:#10B981;font-size:10px;font-weight:700;">📌 Radial • ✨ Auto-AI</span>
-            </div>
+        <div id="boardDetailView" style="display:none;">
+          <button class="ctrl-btn" onclick="hideBoardDetail()">← Boards</button>
+          <h3 id="boardDetailTitle" style="font-size:18px;margin-top:10px;">🎬 Video Editing</h3>
+          <p style="font-size:11px;color:var(--text-muted);">14 Pins • Shown in Save Reel</p>
+          <div style="font-size:12px;font-weight:700;margin-top:10px;">Sections</div>
+          <div class="chips-bar" style="margin-top:6px;">
+            <button class="chip selected">All (14)</button>
+            <button class="chip">📂 CapCut (6)</button>
+            <button class="chip">📂 Premiere Pro (3)</button>
+            <button class="chip">📂 Hooks (4)</button>
+            <button class="chip" onclick="showToast('New section dialog')">+ Section</button>
           </div>
-
-          <div class="pin-card" onclick="switchTab(0)">
-            <div class="pin-cover" style="height:76px;background:linear-gradient(135deg,#8B5CF6,#5B21B6);">
-              <span style="font-size:24px;">🤖</span>
-              <span class="domain-pill">11 Pins</span>
-            </div>
+          <div class="pin-card" style="margin-top:12px;">
             <div class="pin-body">
-              <div class="pin-subject">AI & Tech Tools</div>
-              <div class="pin-caption">Agents, prompts, coding workflows & SaaS</div>
-              <span style="color:#10B981;font-size:10px;font-weight:700;">📌 Radial • ✨ Auto-AI</span>
-            </div>
-          </div>
-
-          <div class="pin-card" onclick="switchTab(0)">
-            <div class="pin-cover" style="height:76px;background:linear-gradient(135deg,#F59E0B,#B45309);">
-              <span style="font-size:24px;">💪</span>
-              <span class="domain-pill">8 Pins</span>
-            </div>
-            <div class="pin-body">
-              <div class="pin-subject">Health & Fitness</div>
-              <div class="pin-caption">Workouts, mobility, nutrition & sleep</div>
-              <span style="color:#10B981;font-size:10px;font-weight:700;">📌 Radial</span>
+              <span class="board-mini">� CapCut</span>
+              <div class="pin-subject">3 CapCut Speed Ramp Transitions</div>
+              <div class="pin-caption">Keyframe graph secrets for seamless B-roll speed ramps.</div>
+              <div class="btn-row" style="margin-top:8px;">
+                <button class="ctrl-btn" onclick="showToast('Move: Video Editing → Trading')">⇄ Move</button>
+                <button class="ctrl-btn" onclick="showToast('Copied: stays here and also appears in Recreate Soon')">⧉ Add to Board</button>
+                <button class="ctrl-btn" onclick="showToast('Assigned to Hooks section')">📂 Section</button>
+              </div>
             </div>
           </div>
         </div>
@@ -856,6 +904,11 @@
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <span class="domain-pill" style="background:#8B5CF6;">AI & Tech Tools</span>
             <button class="ctrl-btn active" style="font-size:11px;padding:5px 10px;">↗ Watch on Instagram</button>
+          </div>
+          <div class="btn-row" style="margin-top:8px;">
+            <button class="ctrl-btn" onclick="showToast('Move: AI & Tech Tools → Freelance Ideas')">⇄ Move</button>
+            <button class="ctrl-btn" onclick="showToast('Added: Pin remains here and also appears in Freelance Ideas')">⧉ Add to Board</button>
+            <button class="ctrl-btn" onclick="showToast('Assigned to Prompts section')">📂 Section</button>
           </div>
           <h3 style="margin-top:8px;font-size:15px;">@brochbuilds — Claude Code + AI Agent Workflow Setup</h3>
           <p style="font-size:11.5px;color:var(--text-muted);margin-top:4px;">Saved Today, 09:10 AM • Analyzed with Google Gemini (gemini-2.5-flash)</p>
@@ -1019,13 +1072,27 @@
 
             <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);" />
 
-            <div style="font-size:12px;font-weight:700;color:#E2E8F0;">Tap a Board to Save & Close Instantly:</div>
+            <div style="font-size:12px;font-weight:700;color:#E2E8F0;">Tap a Quick Board to Save & Close Instantly:</div>
             <div class="btn-row">
               <button class="one-tap-board-btn" style="background:#E60023;" onclick="instantPinToBoard('🎬 Video Editing')">🎬 Video Editing</button>
               <button class="one-tap-board-btn" style="background:#10B981;" onclick="instantPinToBoard('📈 Trading')">📈 Trading</button>
               <button class="one-tap-board-btn" style="background:#F59E0B;" onclick="instantPinToBoard('💪 Health & Fitness')">💪 Health & Fitness</button>
               <button class="one-tap-board-btn" style="background:#3B82F6;" onclick="instantPinToBoard('💼 Jobs & Career')">💼 Jobs & Career</button>
               <button class="one-tap-board-btn" style="background:#8B5CF6;" onclick="instantPinToBoard('🤖 AI & Tech Tools')">🤖 AI & Tech Tools</button>
+            </div>
+
+            <div class="btn-row" style="margin-top:7px;">
+              <button class="ctrl-btn" onclick="toggleMoreBoards()">More Boards…</button>
+              <button class="ctrl-btn" onclick="toggleNewBoardInput()">+ New Board</button>
+            </div>
+            <div id="allQuickBoards" style="display:none;margin-top:6px;" class="btn-row">
+              <button class="one-tap-board-btn" style="background:#6366F1;" onclick="instantPinToBoard('💡 Freelance Ideas')">💡 Freelance Ideas</button>
+              <button class="one-tap-board-btn" style="background:#0EA5E9;" onclick="instantPinToBoard('🏠 Household')">🏠 Household</button>
+              <button class="one-tap-board-btn" style="background:#EC4899;" onclick="instantPinToBoard('🎥 Recreate Soon')">🎥 Recreate Soon</button>
+            </div>
+            <div id="newBoardRow" style="display:none;margin-top:7px;gap:6px;">
+              <input class="search-input" style="flex:1;padding:8px;font-size:11px;" placeholder="New board name" />
+              <button class="ctrl-btn active" onclick="instantPinToBoard('New Board')">Create & Save</button>
             </div>
 
             <button class="one-tap-board-btn" style="background:linear-gradient(90deg,#8B5CF6,#6366F1);width:100%;margin-top:4px;" onclick="instantPinToBoard('✨ AI Auto-Board (AI & Tech Tools)')">
@@ -1105,6 +1172,32 @@
         sidebarBtn.parentElement.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
         sidebarBtn.classList.add('active');
       }
+      hideBoardDetail();
+    }
+
+    function showBoardDetail(name, emoji) {
+      document.getElementById('boardsGridView').style.display = 'none';
+      document.getElementById('boardDetailView').style.display = 'block';
+      document.getElementById('boardDetailTitle').innerText = emoji + ' ' + name;
+    }
+
+    function hideBoardDetail() {
+      const grid = document.getElementById('boardsGridView');
+      const detail = document.getElementById('boardDetailView');
+      if (grid && detail) {
+        grid.style.display = 'block';
+        detail.style.display = 'none';
+      }
+    }
+
+    function toggleMoreBoards() {
+      const row = document.getElementById('allQuickBoards');
+      row.style.display = row.style.display === 'none' ? 'flex' : 'none';
+    }
+
+    function toggleNewBoardInput() {
+      const row = document.getElementById('newBoardRow');
+      row.style.display = row.style.display === 'none' ? 'flex' : 'none';
     }
 
     function setTheme(themeName, btn) {

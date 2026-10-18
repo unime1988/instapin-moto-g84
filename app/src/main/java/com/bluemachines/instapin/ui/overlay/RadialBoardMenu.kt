@@ -394,6 +394,7 @@ fun QuickSaveOverlaySheet(
     onDismiss: () -> Unit,
     onStopHoverService: () -> Unit = onDismiss,
     onAutoGrabReelLink: suspend () -> String? = { null },
+    onCreateBoard: suspend (String) -> Long? = { null },
     onSavePin: (
         manualUrl: String,
         author: String,
@@ -410,7 +411,12 @@ fun QuickSaveOverlaySheet(
     var notesInput by remember { mutableStateOf("") }
     var runPhase2Analysis by remember { mutableStateOf(false) }
     var showAdvancedMultiSelect by remember { mutableStateOf(false) }
+    var showAllBoards by remember { mutableStateOf(false) }
+    var showNewBoardField by remember { mutableStateOf(false) }
+    var newBoardName by remember { mutableStateOf("") }
+    var creatingBoard by remember { mutableStateOf(false) }
 
+    val scope = rememberCoroutineScope()
     val selectedBoardIds = remember { mutableStateListOf<Long>() }
     val selectedMoodIds = remember { mutableStateListOf<Long>() }
 
@@ -607,8 +613,17 @@ fun QuickSaveOverlaySheet(
                 ) {
                     if (!showAdvancedMultiSelect) {
                         // FAST 1-TAP BOARD SAVE MODE (Default)
+                        val boardsToShow = if (showAllBoards) {
+                            boards
+                        } else {
+                            boards.filter { it.isPinnedToRadial }.take(6)
+                        }
                         Text(
-                            text = "Tap a Board to Save & Close Instantly:",
+                            text = if (showAllBoards) {
+                                "Tap any Board to Save & Close Instantly:"
+                            } else {
+                                "Tap a Quick Board to Save & Close Instantly:"
+                            },
                             color = Color(0xFFE0E0F0),
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold
@@ -619,7 +634,7 @@ fun QuickSaveOverlaySheet(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            boards.forEach { board ->
+                            boardsToShow.forEach { board ->
                                 Button(
                                     onClick = {
                                         // 1-TAP INSTANT SAVE & MINIMIZE!
@@ -643,6 +658,73 @@ fun QuickSaveOverlaySheet(
                                         color = Color.White,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = { showAllBoards = !showAllBoards },
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text(
+                                    text = if (showAllBoards) "⌃ Quick Boards" else "More Boards…",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = { showNewBoardField = !showNewBoardField },
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("+ New Board", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        if (showNewBoardField) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(
+                                    value = newBoardName,
+                                    onValueChange = { newBoardName = it },
+                                    label = { Text("New board name", fontSize = 11.sp) },
+                                    singleLine = true,
+                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Button(
+                                    onClick = {
+                                        if (newBoardName.isNotBlank() && !creatingBoard) {
+                                            creatingBoard = true
+                                            scope.launch {
+                                                val newBoardId = onCreateBoard(newBoardName)
+                                                creatingBoard = false
+                                                if (newBoardId != null) {
+                                                    onSavePin(
+                                                        urlInput,
+                                                        authorInput,
+                                                        captionInput,
+                                                        listOf(newBoardId),
+                                                        emptyList(),
+                                                        "",
+                                                        runPhase2Analysis
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    },
+                                    enabled = newBoardName.isNotBlank() && !creatingBoard,
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE60023))
+                                ) {
+                                    Text(
+                                        text = if (creatingBoard) "Saving…" else "Create & Save",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
                                     )
                                 }
                             }

@@ -6,6 +6,7 @@ import com.bluemachines.instapin.data.local.AppDatabase
 import com.bluemachines.instapin.data.local.AppPreferences
 import com.bluemachines.instapin.data.local.entity.AuthorSummary
 import com.bluemachines.instapin.data.local.entity.Board
+import com.bluemachines.instapin.data.local.entity.BoardSection
 import com.bluemachines.instapin.data.local.entity.BoardWithCount
 import com.bluemachines.instapin.data.local.entity.CaptureSource
 import com.bluemachines.instapin.data.local.entity.DomainSummary
@@ -89,6 +90,7 @@ class PinRepository(
     val phase3TriagePinsFlow: Flow<List<PopulatedVideoPin>> = pinDao.observePhase3TriagePins()
     val boardsWithCountFlow: Flow<List<BoardWithCount>> = boardDao.observeBoardsWithCount()
     val allBoardsFlow: Flow<List<Board>> = boardDao.observeAllBoards()
+    val allSectionsFlow: Flow<List<BoardSection>> = boardDao.observeAllSections()
     val radialBoardsFlow: Flow<List<Board>> = boardDao.observeRadialBoards()
     val allMoodsFlow: Flow<List<MoodTag>> = boardDao.observeAllMoodTags()
     val authorSummariesFlow: Flow<List<AuthorSummary>> = pinDao.observeAuthorSummaries()
@@ -180,7 +182,12 @@ class PinRepository(
             )
         }
 
-        val pinId = pinDao.insertPin(pinToSave)
+        val pinId = if (existingPin != null) {
+            pinDao.updatePin(pinToSave)
+            existingPin.id
+        } else {
+            pinDao.insertPin(pinToSave)
+        }
 
         val targetBoardIds = if (explicitBoardIds.isNotEmpty()) {
             explicitBoardIds
@@ -192,7 +199,7 @@ class PinRepository(
         }
 
         targetBoardIds.forEach { boardId ->
-            pinDao.insertPinBoardCrossRef(PinBoardCrossRef(pinId = pinId, boardId = boardId))
+            copyPinToBoard(pinId = pinId, targetBoardId = boardId)
         }
 
         val targetMoodIds = if (explicitMoodIds.isNotEmpty()) {
@@ -303,7 +310,7 @@ class PinRepository(
                 classification.suggestedBoards.mapNotNull { suggestedName ->
                     allBoards.firstOrNull { it.name.equals(suggestedName, ignoreCase = true) }?.id
                 }.forEach { boardId ->
-                    pinDao.insertPinBoardCrossRef(PinBoardCrossRef(pinId = pinId, boardId = boardId))
+                    copyPinToBoard(pinId = pinId, targetBoardId = boardId)
                 }
             }
 
@@ -552,6 +559,95 @@ class PinRepository(
                 autoAnalyzePhase2 = autoAnalyzePhase2
             )
         )
+    }
+
+    suspend fun createQuickSaveBoard(name: String): Long {
+        boardDao.getBoardByName(name.trim())?.let { return it.id }
+        return createBoard(
+            name = name,
+            emoji = "📌",
+            colorHex = "#E60023",
+            description = "Created from the Reel save screen",
+            pinToRadial = false,
+            autoAnalyzePhase2 = false
+        )
+    }
+
+    suspend fun updateBoard(board: Board) {
+        boardDao.updateBoard(board)
+    }
+
+    suspend fun deleteBoard(board: Board) {
+        boardDao.deleteBoard(board)
+    }
+
+    suspend fun setBoardQuickSaveVisibility(boardId: Long, visibleInSaveSheet: Boolean) {
+        val board = boardDao.getAllBoards().firstOrNull { it.id == boardId } ?: return
+        val quickBoardCount = boardDao.getRadialBoards().size
+        boardDao.updateBoard(
+            board.copy(
+                isPinnedToRadial = visibleInSaveSheet,
+                radialSlotIndex = if (visibleInSaveSheet && !board.isPinnedToRadial) {
+                    quickBoardCount
+                } else {
+                    board.radialSlotIndex
+                }
+            )
+        )
+    }
+
+    suspend fun createBoardSection(boardId: Long, name: String, emoji: String = "📂"): Long {
+        val existing = boardDao.getSectionsForBoard(boardId)
+        return boardDao.insertSection(
+            BoardSection(
+                boardId = boardId,
+                name = name.trim(),
+                emoji = emoji.ifBlank { "📂" },
+                sortOrder = existing.size
+            )
+        )
+    }
+
+    suspend fun updateBoardSection(section: BoardSection) {
+        boardDao.updateSection(section)
+    }
+
+    suspend fun deleteBoardSection(section: BoardSection) {
+        boardDao.deleteSection(section)
+    }
+
+    /** Copy/Add: keep the Pin in all current boards and add a new board relationship. */
+    suspend fun copyPinToBoard(pinId: Long, targetBoardId: Long, targetSectionId: Long? = null) {
+        // Preserve an existing section assignment when simply adding to a board.
+        val effectiveSectionId = targetSectionId ?: pinDao.getPinSectionId(pinId, targetBoardId)
+        pinDao.insertPinBoardCrossRef(
+            PinBoardCrossRef(
+                pinId = pinId,
+                boardId = targetBoardId,
+                sectionId = effectiveSectionId
+            )
+        )
+    }
+
+    /** Move: remove only the chosen source board relationship, then add the target relationship. */
+    suspend fun movePinToBoard(
+        pinId: Long,
+        sourceBoardId: Long?,
+        targetBoardId: Long,
+        targetSectionId: Long? = null
+    ) {
+        sourceBoardId?.takeIf { it != targetBoardId || targetSectionId != null }?.let { sourceId ->
+            pinDao.removePinFromBoard(pinId, sourceId)
+        }
+        copyPinToBoard(pinId, targetBoardId, targetSectionId)
+    }
+
+    suspend fun assignPinToSection(pinId: Long, boardId: Long, sectionId: Long?) {
+        pinDao.assignPinToSection(pinId = pinId, boardId = boardId, sectionId = sectionId)
+    }
+
+    suspend fun getPinSectionId(pinId: Long, boardId: Long): Long? {
+        return pinDao.getPinSectionId(pinId, boardId)
     }
 
     suspend fun createMoodTag(name: String, emoji: String, colorHex: String): Long {

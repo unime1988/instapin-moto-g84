@@ -30,12 +30,15 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +48,7 @@ import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -60,6 +64,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.bluemachines.instapin.data.local.entity.Board
+import com.bluemachines.instapin.data.local.entity.BoardSection
 import com.bluemachines.instapin.data.local.entity.PopulatedVideoPin
 import com.bluemachines.instapin.ui.overlay.parseHexColor
 import kotlinx.serialization.json.Json
@@ -71,8 +77,13 @@ import java.util.Locale
 @Composable
 fun PinDetailAndRepurposeScreen(
     populatedPin: PopulatedVideoPin,
+    allBoards: List<Board>,
+    allSections: List<BoardSection>,
     onBack: () -> Unit,
     onTriggerPhase2Analysis: (Long) -> Unit,
+    onMovePin: (pinId: Long, sourceBoardId: Long?, targetBoardId: Long, targetSectionId: Long?) -> Unit,
+    onCopyPinToBoard: (pinId: Long, targetBoardId: Long, targetSectionId: Long?) -> Unit,
+    onAssignPinToSection: (pinId: Long, boardId: Long, sectionId: Long?) -> Unit,
     onAttachClipboardLink: (String) -> Unit = {},
     onDeletePin: () -> Unit
 ) {
@@ -80,6 +91,9 @@ fun PinDetailAndRepurposeScreen(
     val pin = populatedPin.pin
     val analysis = populatedPin.analysis
     var selectedTab by remember { mutableIntStateOf(0) }
+    var showMoveDialog by remember { mutableStateOf(false) }
+    var showCopyDialog by remember { mutableStateOf(false) }
+    var showSectionDialog by remember { mutableStateOf(false) }
 
     val json = remember { Json { ignoreUnknownKeys = true } }
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()) }
@@ -192,6 +206,31 @@ fun PinDetailAndRepurposeScreen(
                             )
                             Spacer(Modifier.width(6.dp))
                             Text("Watch on Instagram", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { showMoveDialog = true },
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("⇄ Move", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                        OutlinedButton(
+                            onClick = { showCopyDialog = true },
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("⧉ Add to Board", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                        OutlinedButton(
+                            onClick = { showSectionDialog = true },
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("📂 Section", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -499,6 +538,224 @@ fun PinDetailAndRepurposeScreen(
             }
         }
     }
+    if (showMoveDialog) {
+        var sourceBoardId by remember(pin.id) { mutableStateOf(populatedPin.boards.firstOrNull()?.id) }
+        var targetBoardId by remember(pin.id) { mutableStateOf<Long?>(null) }
+        var targetSectionId by remember(pin.id) { mutableStateOf<Long?>(null) }
+        val targetSections = allSections.filter { it.boardId == targetBoardId }
+
+        AlertDialog(
+            onDismissRequest = { showMoveDialog = false },
+            title = { Text("Move Pin") },
+            text = {
+                Column {
+                    Text("From board", color = Color(0xFFA0A0B8), fontSize = 12.sp)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        populatedPin.boards.forEach { board ->
+                            FilterChip(
+                                selected = sourceBoardId == board.id,
+                                onClick = { sourceBoardId = board.id },
+                                label = { Text("${board.emoji} ${board.name}", fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text("To board", color = Color(0xFFA0A0B8), fontSize = 12.sp)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        allBoards.forEach { board ->
+                            FilterChip(
+                                selected = targetBoardId == board.id,
+                                onClick = {
+                                    targetBoardId = board.id
+                                    targetSectionId = null
+                                },
+                                label = { Text("${board.emoji} ${board.name}", fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = parseHexColor(board.colorHex).copy(alpha = 0.75f)
+                                )
+                            )
+                        }
+                    }
+                    if (targetSections.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text("Section (optional)", color = Color(0xFFA0A0B8), fontSize = 12.sp)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            FilterChip(
+                                selected = targetSectionId == null,
+                                onClick = { targetSectionId = null },
+                                label = { Text("No section", fontSize = 11.sp) }
+                            )
+                            targetSections.forEach { section ->
+                                FilterChip(
+                                    selected = targetSectionId == section.id,
+                                    onClick = { targetSectionId = section.id },
+                                    label = { Text("${section.emoji} ${section.name}", fontSize = 11.sp) }
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = targetBoardId != null,
+                    onClick = {
+                        targetBoardId?.let { targetId ->
+                            onMovePin(pin.id, sourceBoardId, targetId, targetSectionId)
+                            Toast.makeText(context, "Pin moved", Toast.LENGTH_SHORT).show()
+                            showMoveDialog = false
+                        }
+                    }
+                ) {
+                    Text("Move")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMoveDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showCopyDialog) {
+        var targetBoardId by remember(pin.id) { mutableStateOf<Long?>(null) }
+        var targetSectionId by remember(pin.id) { mutableStateOf<Long?>(null) }
+        val targetSections = allSections.filter { it.boardId == targetBoardId }
+
+        AlertDialog(
+            onDismissRequest = { showCopyDialog = false },
+            title = { Text("Add Pin to Another Board") },
+            text = {
+                Column {
+                    Text(
+                        "The Pin remains in its current board(s).",
+                        color = Color(0xFFA0A0B8),
+                        fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text("Add to", color = Color(0xFFA0A0B8), fontSize = 12.sp)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        allBoards.forEach { board ->
+                            FilterChip(
+                                selected = targetBoardId == board.id,
+                                onClick = {
+                                    targetBoardId = board.id
+                                    targetSectionId = null
+                                },
+                                label = { Text("${board.emoji} ${board.name}", fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = parseHexColor(board.colorHex).copy(alpha = 0.75f)
+                                )
+                            )
+                        }
+                    }
+                    if (targetSections.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text("Section (optional)", color = Color(0xFFA0A0B8), fontSize = 12.sp)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            FilterChip(
+                                selected = targetSectionId == null,
+                                onClick = { targetSectionId = null },
+                                label = { Text("No section", fontSize = 11.sp) }
+                            )
+                            targetSections.forEach { section ->
+                                FilterChip(
+                                    selected = targetSectionId == section.id,
+                                    onClick = { targetSectionId = section.id },
+                                    label = { Text("${section.emoji} ${section.name}", fontSize = 11.sp) }
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = targetBoardId != null,
+                    onClick = {
+                        targetBoardId?.let { targetId ->
+                            onCopyPinToBoard(pin.id, targetId, targetSectionId)
+                            Toast.makeText(context, "Added to board", Toast.LENGTH_SHORT).show()
+                            showCopyDialog = false
+                        }
+                    }
+                ) {
+                    Text("Add")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCopyDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showSectionDialog) {
+        var selectedBoardId by remember(pin.id) { mutableStateOf(populatedPin.boards.firstOrNull()?.id) }
+        var selectedSectionId by remember(pin.id) { mutableStateOf<Long?>(null) }
+        val boardSections = allSections.filter { it.boardId == selectedBoardId }
+
+        AlertDialog(
+            onDismissRequest = { showSectionDialog = false },
+            title = { Text("Assign to Section") },
+            text = {
+                Column {
+                    Text("Board", color = Color(0xFFA0A0B8), fontSize = 12.sp)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        populatedPin.boards.forEach { board ->
+                            FilterChip(
+                                selected = selectedBoardId == board.id,
+                                onClick = {
+                                    selectedBoardId = board.id
+                                    selectedSectionId = null
+                                },
+                                label = { Text("${board.emoji} ${board.name}", fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text("Section", color = Color(0xFFA0A0B8), fontSize = 12.sp)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(
+                            selected = selectedSectionId == null,
+                            onClick = { selectedSectionId = null },
+                            label = { Text("No section", fontSize = 11.sp) }
+                        )
+                        boardSections.forEach { section ->
+                            FilterChip(
+                                selected = selectedSectionId == section.id,
+                                onClick = { selectedSectionId = section.id },
+                                label = { Text("${section.emoji} ${section.name}", fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                    if (boardSections.isEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Create sections from the selected Board's screen.",
+                            color = Color(0xFFA0A0B8),
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = selectedBoardId != null,
+                    onClick = {
+                        selectedBoardId?.let { boardId ->
+                            onAssignPinToSection(pin.id, boardId, selectedSectionId)
+                            Toast.makeText(context, "Section updated", Toast.LENGTH_SHORT).show()
+                            showSectionDialog = false
+                        }
+                    }
+                ) {
+                    Text("Apply")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSectionDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -524,6 +781,7 @@ private fun AnalysisSectionCard(title: String, body: String) {
             )
         }
     }
+
 }
 
 @Composable

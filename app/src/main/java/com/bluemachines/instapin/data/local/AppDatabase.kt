@@ -6,12 +6,14 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.bluemachines.instapin.data.local.dao.AnalysisDao
 import com.bluemachines.instapin.data.local.dao.BoardDao
 import com.bluemachines.instapin.data.local.dao.ImportDao
 import com.bluemachines.instapin.data.local.dao.PinDao
 import com.bluemachines.instapin.data.local.entity.Board
+import com.bluemachines.instapin.data.local.entity.BoardSection
 import com.bluemachines.instapin.data.local.entity.CaptureSource
 import com.bluemachines.instapin.data.local.entity.ImportBatch
 import com.bluemachines.instapin.data.local.entity.MoodTag
@@ -36,13 +38,14 @@ class DatabaseConverters {
     entities = [
         VideoPin::class,
         Board::class,
+        BoardSection::class,
         MoodTag::class,
         PinBoardCrossRef::class,
         PinMoodCrossRef::class,
         VideoAnalysis::class,
         ImportBatch::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 @TypeConverters(DatabaseConverters::class)
@@ -55,6 +58,34 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         @Volatile
         private var INSTANCE: AppDatabase? = null
+
+        /** Safe v1 → v2 upgrade: adds Board Sections and the optional section pointer
+         * on each Pin↔Board membership without deleting any Pins, Boards, Moods or Analysis.
+         */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `board_sections` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `boardId` INTEGER NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `emoji` TEXT NOT NULL DEFAULT '📂',
+                        `sortOrder` INTEGER NOT NULL DEFAULT 0,
+                        `createdAt` INTEGER NOT NULL,
+                        FOREIGN KEY(`boardId`) REFERENCES `boards`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_board_sections_boardId` ON `board_sections` (`boardId`)")
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_board_sections_boardId_name` " +
+                        "ON `board_sections` (`boardId`, `name`)"
+                )
+                db.execSQL("ALTER TABLE `pin_board_cross_ref` ADD COLUMN `sectionId` INTEGER")
+            }
+        }
 
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -71,6 +102,7 @@ abstract class AppDatabase : RoomDatabase() {
                             }
                         }
                     })
+                    .addMigrations(MIGRATION_1_2)
                     .build()
                 INSTANCE = instance
                 CoroutineScope(Dispatchers.IO).launch {

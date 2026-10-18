@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.PushPin
@@ -73,6 +74,8 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.bluemachines.instapin.data.local.FeedLayoutMode
 import com.bluemachines.instapin.data.local.entity.AuthorSummary
+import com.bluemachines.instapin.data.local.entity.Board
+import com.bluemachines.instapin.data.local.entity.BoardSection
 import com.bluemachines.instapin.data.local.entity.BoardWithCount
 import com.bluemachines.instapin.data.local.entity.DomainSummary
 import com.bluemachines.instapin.data.local.entity.MoodTag
@@ -696,9 +699,13 @@ fun BoardsGridScreen(
     onBoardClick: (Long) -> Unit,
     onAuthorClick: (String) -> Unit,
     onDomainClick: (String) -> Unit,
-    onCreateBoard: (name: String, emoji: String, colorHex: String, desc: String, pinRadial: Boolean, autoPhase2: Boolean) -> Unit
+    onCreateBoard: (name: String, emoji: String, colorHex: String, desc: String, pinRadial: Boolean, autoPhase2: Boolean) -> Unit,
+    onUpdateBoard: (board: Board) -> Unit,
+    onToggleBoardQuickSave: (boardId: Long, visible: Boolean) -> Unit
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
+    var editingBoard by remember { mutableStateOf<Board?>(null) }
+    val quickBoardCount = boardsWithCount.count { it.board.isPinnedToRadial }
 
     Column(
         modifier = Modifier
@@ -718,7 +725,7 @@ fun BoardsGridScreen(
                     fontSize = 20.sp
                 )
                 Text(
-                    text = "Boards marked 📌 appear in your Hold-and-Slide Radial Menu",
+                    text = "Choose up to 6 boards for the Save Reel quick-save row ($quickBoardCount/6 selected)",
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                     fontSize = 12.sp
                 )
@@ -801,21 +808,46 @@ fun BoardsGridScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Spacer(Modifier.height(6.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                if (board.isPinnedToRadial) {
-                                    Text(
-                                        text = "📌 Radial Menu",
-                                        color = Color(0xFF10B981),
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Checkbox(
+                                            checked = board.isPinnedToRadial,
+                                            enabled = board.isPinnedToRadial || quickBoardCount < 6,
+                                            onCheckedChange = { checked ->
+                                                onToggleBoardQuickSave(board.id, checked)
+                                            }
+                                        )
+                                        Text(
+                                            text = "Save Reel",
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                    if (board.autoAnalyzePhase2) {
+                                        Text(
+                                            text = "✨ Auto-Phase 2",
+                                            color = Color(0xFFA78BFA),
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.padding(start = 12.dp)
+                                        )
+                                    }
                                 }
-                                if (board.autoAnalyzePhase2) {
-                                    Text(
-                                        text = "✨ Auto-Phase 2",
-                                        color = Color(0xFFA78BFA),
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.SemiBold
+                                IconButton(
+                                    onClick = { editingBoard = board },
+                                    modifier = Modifier.size(30.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Edit ${board.name}",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
                                     )
                                 }
                             }
@@ -882,8 +914,12 @@ fun BoardsGridScreen(
                         label = { Text("Description / Focus") }
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = pinRadial, onCheckedChange = { pinRadial = it })
-                        Text("Pin to Radial Hold-and-Slide Menu", fontSize = 12.sp)
+                        Checkbox(
+                            checked = pinRadial && quickBoardCount < 6,
+                            enabled = quickBoardCount < 6,
+                            onCheckedChange = { pinRadial = it }
+                        )
+                        Text("Show in Save Reel quick boards", fontSize = 12.sp)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = autoPhase2, onCheckedChange = { autoPhase2 = it })
@@ -895,7 +931,14 @@ fun BoardsGridScreen(
                 Button(
                     onClick = {
                         if (name.isNotBlank()) {
-                            onCreateBoard(name, emoji, "#E60023", desc, pinRadial, autoPhase2)
+                            onCreateBoard(
+                                name,
+                                emoji,
+                                "#E60023",
+                                desc,
+                                pinRadial && quickBoardCount < 6,
+                                autoPhase2
+                            )
                             showCreateDialog = false
                         }
                     }
@@ -905,6 +948,302 @@ fun BoardsGridScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showCreateDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    editingBoard?.let { board ->
+        var name by remember(board.id) { mutableStateOf(board.name) }
+        var emoji by remember(board.id) { mutableStateOf(board.emoji) }
+        var desc by remember(board.id) { mutableStateOf(board.description) }
+        var pinRadial by remember(board.id) { mutableStateOf(board.isPinnedToRadial) }
+        var autoPhase2 by remember(board.id) { mutableStateOf(board.autoAnalyzePhase2) }
+
+        AlertDialog(
+            onDismissRequest = { editingBoard = null },
+            title = { Text("Edit Board") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Board Name") },
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = emoji,
+                        onValueChange = { emoji = it },
+                        label = { Text("Emoji Icon") },
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = desc,
+                        onValueChange = { desc = it },
+                        label = { Text("Description / Focus") }
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = pinRadial,
+                            enabled = pinRadial || quickBoardCount < 6,
+                            onCheckedChange = { pinRadial = it }
+                        )
+                        Text("Show in Save Reel quick boards", fontSize = 12.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = autoPhase2, onCheckedChange = { autoPhase2 = it })
+                        Text("Auto-Run Phase 2 Analysis on Save", fontSize = 12.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (name.isNotBlank()) {
+                            onUpdateBoard(
+                                board.copy(
+                                    name = name.trim(),
+                                    emoji = emoji.ifBlank { "📌" },
+                                    description = desc.trim(),
+                                    isPinnedToRadial = pinRadial,
+                                    autoAnalyzePhase2 = autoPhase2
+                                )
+                            )
+                            editingBoard = null
+                        }
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingBoard = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}
+
+
+/**
+ * Pinterest-style Board view: section chips, section creation, and all Pins inside the selected Board.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun BoardDetailScreen(
+    board: Board,
+    sections: List<BoardSection>,
+    pins: List<PopulatedVideoPin>,
+    onBack: () -> Unit,
+    onCreateSection: (boardId: Long, name: String) -> Unit,
+    onOpenPinDetail: (Long) -> Unit,
+    onTriggerPhase2: (Long) -> Unit,
+    onAuthorClick: (String) -> Unit,
+    onMoodClick: (Long) -> Unit
+) {
+    val context = LocalContext.current
+    val dateFormat = remember { SimpleDateFormat("dd MMM", Locale.getDefault()) }
+    var selectedSectionId by remember(board.id) { mutableStateOf<Long?>(null) }
+    var filterUnsectioned by remember(board.id) { mutableStateOf(false) }
+    var showSectionDialog by remember { mutableStateOf(false) }
+    var newSectionName by remember { mutableStateOf("") }
+
+    val filteredBoardPins = pins.filter { populated ->
+        val sectionForThisBoard = populated.sections.firstOrNull { it.boardId == board.id }
+        when {
+            filterUnsectioned -> sectionForThisBoard == null
+            selectedSectionId != null -> sectionForThisBoard?.id == selectedSectionId
+            else -> true
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp)
+    ) {
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = onBack, shape = RoundedCornerShape(12.dp)) {
+                Text("← Boards", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.width(10.dp))
+            Text(board.emoji, fontSize = 26.sp)
+            Spacer(Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = board.name,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "${pins.size} Pins • ${if (board.isPinnedToRadial) "Shown in Save Reel" else "Hidden from Save Reel"}",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                    fontSize = 12.sp
+                )
+            }
+        }
+
+        if (board.description.isNotBlank()) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = board.description,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                fontSize = 12.sp
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "Sections",
+            color = MaterialTheme.colorScheme.onBackground,
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FilterChip(
+                selected = selectedSectionId == null && !filterUnsectioned,
+                onClick = {
+                    selectedSectionId = null
+                    filterUnsectioned = false
+                },
+                label = { Text("All (${pins.size})") }
+            )
+            FilterChip(
+                selected = filterUnsectioned,
+                onClick = {
+                    selectedSectionId = null
+                    filterUnsectioned = !filterUnsectioned
+                },
+                label = {
+                    val count = pins.count { populated ->
+                        populated.sections.none { it.boardId == board.id }
+                    }
+                    Text("Unorganized ($count)")
+                }
+            )
+            sections.forEach { section ->
+                val count = pins.count { populated ->
+                    populated.sections.any { it.id == section.id }
+                }
+                FilterChip(
+                    selected = selectedSectionId == section.id,
+                    onClick = {
+                        selectedSectionId = if (selectedSectionId == section.id) null else section.id
+                        filterUnsectioned = false
+                    },
+                    label = { Text("${section.emoji} ${section.name} ($count)") }
+                )
+            }
+            OutlinedButton(
+                onClick = { showSectionDialog = true },
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("+ Section", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        if (filteredBoardPins.isEmpty()) {
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "No Pins in this section yet",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Open a Pin and use Move, Add to Board, or Assign Section.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(filteredBoardPins, key = { it.pin.id }) { populated ->
+                    Column {
+                        val sectionForThisBoard = populated.sections.firstOrNull { it.boardId == board.id }
+                        sectionForThisBoard?.let { section ->
+                            Surface(
+                                color = Color(0xFF6366F1).copy(alpha = 0.18f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            ) {
+                                Text(
+                                    text = "📂 ${section.name}",
+                                    color = Color(0xFFC7D2FE),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+                        DetailedListPinCard(
+                            populated = populated,
+                            fontMultiplier = 1.0f,
+                            dateFormat = dateFormat,
+                            onOpenDetail = { onOpenPinDetail(populated.pin.id) },
+                            onTriggerPhase2 = { onTriggerPhase2(populated.pin.id) },
+                            onOpenInstagram = { openInstagramPermalink(context, populated.pin.instagramUrl) },
+                            onAuthorClick = { onAuthorClick(populated.pin.authorHandle) },
+                            onBoardClick = {},
+                            onMoodClick = onMoodClick
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showSectionDialog) {
+        AlertDialog(
+            onDismissRequest = { showSectionDialog = false },
+            title = { Text("New Section in ${board.name}") },
+            text = {
+                OutlinedTextField(
+                    value = newSectionName,
+                    onValueChange = { newSectionName = it },
+                    label = { Text("Section name (e.g., CapCut, Hooks)") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newSectionName.isNotBlank()) {
+                            onCreateSection(board.id, newSectionName.trim())
+                            newSectionName = ""
+                            showSectionDialog = false
+                        }
+                    }
+                ) {
+                    Text("Create")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSectionDialog = false }) {
                     Text("Cancel")
                 }
             }

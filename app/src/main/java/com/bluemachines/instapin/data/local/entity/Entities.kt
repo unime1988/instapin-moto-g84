@@ -117,7 +117,34 @@ data class MoodTag(
 )
 data class PinBoardCrossRef(
     val pinId: Long,
-    val boardId: Long
+    val boardId: Long,
+    val sectionId: Long? = null
+)
+
+/**
+ * Pinterest-style sub-board Section inside a Board (e.g., Video Editing -> CapCut, Hooks).
+ */
+@Serializable
+@Entity(
+    tableName = "board_sections",
+    foreignKeys = [
+        ForeignKey(
+            entity = Board::class,
+            parentColumns = ["id"],
+            childColumns = ["boardId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("boardId"), Index(value = ["boardId", "name"], unique = true)]
+)
+data class BoardSection(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val boardId: Long,
+    val name: String,
+    val emoji: String = "📂",
+    val sortOrder: Int = 0,
+    val createdAt: Long = System.currentTimeMillis()
 )
 
 /**
@@ -227,6 +254,16 @@ data class PopulatedVideoPin(
         )
     )
     val moods: List<MoodTag>,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "id",
+        associateBy = Junction(
+            value = PinBoardCrossRef::class,
+            parentColumn = "pinId",
+            entityColumn = "sectionId"
+        )
+    )
+    val sections: List<BoardSection>,
     @Relation(
         parentColumn = "id",
         entityColumn = "pinId"

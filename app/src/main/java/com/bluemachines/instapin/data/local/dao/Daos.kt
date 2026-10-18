@@ -9,6 +9,7 @@ import androidx.room.Transaction
 import androidx.room.Update
 import com.bluemachines.instapin.data.local.entity.AuthorSummary
 import com.bluemachines.instapin.data.local.entity.Board
+import com.bluemachines.instapin.data.local.entity.BoardSection
 import com.bluemachines.instapin.data.local.entity.BoardWithCount
 import com.bluemachines.instapin.data.local.entity.DomainSummary
 import com.bluemachines.instapin.data.local.entity.ImportBatch
@@ -55,11 +56,23 @@ interface PinDao {
     @Delete
     suspend fun deletePin(pin: VideoPin)
 
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPinBoardCrossRef(ref: PinBoardCrossRef)
 
     @Query("DELETE FROM pin_board_cross_ref WHERE pinId = :pinId")
     suspend fun clearBoardsForPin(pinId: Long)
+
+    @Query("DELETE FROM pin_board_cross_ref WHERE pinId = :pinId AND boardId = :boardId")
+    suspend fun removePinFromBoard(pinId: Long, boardId: Long)
+
+    @Query("UPDATE pin_board_cross_ref SET sectionId = :sectionId WHERE pinId = :pinId AND boardId = :boardId")
+    suspend fun assignPinToSection(pinId: Long, boardId: Long, sectionId: Long?)
+
+    @Query("SELECT sectionId FROM pin_board_cross_ref WHERE pinId = :pinId AND boardId = :boardId LIMIT 1")
+    suspend fun getPinSectionId(pinId: Long, boardId: Long): Long?
+
+    @Query("SELECT * FROM pin_board_cross_ref WHERE pinId = :pinId")
+    suspend fun getBoardRefsForPin(pinId: Long): List<PinBoardCrossRef>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertPinMoodCrossRef(ref: PinMoodCrossRef)
@@ -131,6 +144,24 @@ interface BoardDao {
 
     @Delete
     suspend fun deleteBoard(board: Board)
+
+    @Query("SELECT * FROM board_sections ORDER BY boardId ASC, sortOrder ASC, name ASC")
+    fun observeAllSections(): Flow<List<BoardSection>>
+
+    @Query("SELECT * FROM board_sections WHERE boardId = :boardId ORDER BY sortOrder ASC, name ASC")
+    fun observeSectionsForBoard(boardId: Long): Flow<List<BoardSection>>
+
+    @Query("SELECT * FROM board_sections WHERE boardId = :boardId ORDER BY sortOrder ASC, name ASC")
+    suspend fun getSectionsForBoard(boardId: Long): List<BoardSection>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertSection(section: BoardSection): Long
+
+    @Update
+    suspend fun updateSection(section: BoardSection)
+
+    @Delete
+    suspend fun deleteSection(section: BoardSection)
 
     @Query("SELECT * FROM mood_tags ORDER BY name ASC")
     fun observeAllMoodTags(): Flow<List<MoodTag>>

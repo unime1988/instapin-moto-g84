@@ -189,6 +189,7 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
                                 updateWindowMode(fullScreen = true, focusable = true)
                                 grabbed
                             },
+                            onCreateBoard = { name -> app.repository.createQuickSaveBoard(name) },
                             onSavePin = { manualUrl, author, caption, boardIds, moodIds, notes, runPhase2 ->
                                 isQuickSheetExpanded = false
                                 updateWindowMode(fullScreen = false, focusable = false)

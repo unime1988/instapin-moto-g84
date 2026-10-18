@@ -44,6 +44,7 @@ import com.bluemachines.instapin.data.local.FeedLayoutMode
 import com.bluemachines.instapin.service.FloatingOverlayService
 import com.bluemachines.instapin.ui.MainViewModel
 import com.bluemachines.instapin.ui.detail.PinDetailAndRepurposeScreen
+import com.bluemachines.instapin.ui.home.BoardDetailScreen
 import com.bluemachines.instapin.ui.home.BoardsGridScreen
 import com.bluemachines.instapin.ui.home.PinFeedScreen
 import com.bluemachines.instapin.ui.import_phase3.Phase3HistoricalImportScreen
@@ -100,6 +101,7 @@ class MainActivity : ComponentActivity() {
             val allPins by viewModel.allPins.collectAsState()
             val boardsWithCount by viewModel.boardsWithCount.collectAsState()
             val allBoards by viewModel.allBoards.collectAsState()
+            val allSections by viewModel.allSections.collectAsState()
             val allMoods by viewModel.allMoods.collectAsState()
             val authors by viewModel.authorSummaries.collectAsState()
             val domains by viewModel.domainSummaries.collectAsState()
@@ -118,18 +120,33 @@ class MainActivity : ComponentActivity() {
             MaterialTheme(colorScheme = activeColorScheme) {
                 var currentBottomTab by remember { mutableIntStateOf(0) }
                 var selectedPinIdForDetail by remember { mutableStateOf<Long?>(null) }
+                var selectedBoardIdForDetail by remember { mutableStateOf<Long?>(null) }
                 var showAddPinSheet by remember { mutableStateOf(false) }
 
                 val activeDetailPin = remember(selectedPinIdForDetail, allPins) {
                     allPins.firstOrNull { it.pin.id == selectedPinIdForDetail }
                 }
+                val activeDetailBoard = remember(selectedBoardIdForDetail, allBoards) {
+                    allBoards.firstOrNull { it.id == selectedBoardIdForDetail }
+                }
 
                 if (activeDetailPin != null) {
                     PinDetailAndRepurposeScreen(
                         populatedPin = activeDetailPin,
+                        allBoards = allBoards,
+                        allSections = allSections,
                         onBack = { selectedPinIdForDetail = null },
                         onTriggerPhase2Analysis = { pinId ->
                             viewModel.triggerPhase2Analysis(pinId)
+                        },
+                        onMovePin = { pinId, sourceBoardId, targetBoardId, targetSectionId ->
+                            viewModel.movePinToBoard(pinId, sourceBoardId, targetBoardId, targetSectionId)
+                        },
+                        onCopyPinToBoard = { pinId, targetBoardId, targetSectionId ->
+                            viewModel.copyPinToBoard(pinId, targetBoardId, targetSectionId)
+                        },
+                        onAssignPinToSection = { pinId, boardId, sectionId ->
+                            viewModel.assignPinToSection(pinId, boardId, sectionId)
                         },
                         onAttachClipboardLink = { rawUrl ->
                             viewModel.attachReelUrlToPin(activeDetailPin.pin.id, rawUrl) {}
@@ -138,6 +155,22 @@ class MainActivity : ComponentActivity() {
                             viewModel.deletePin(activeDetailPin.pin)
                             selectedPinIdForDetail = null
                         }
+                    )
+                } else if (activeDetailBoard != null) {
+                    BoardDetailScreen(
+                        board = activeDetailBoard,
+                        sections = allSections.filter { it.boardId == activeDetailBoard.id },
+                        pins = allPins.filter { populated ->
+                            populated.boards.any { it.id == activeDetailBoard.id }
+                        },
+                        onBack = { selectedBoardIdForDetail = null },
+                        onCreateSection = { boardId, sectionName ->
+                            viewModel.createBoardSection(boardId, sectionName)
+                        },
+                        onOpenPinDetail = { pinId -> selectedPinIdForDetail = pinId },
+                        onTriggerPhase2 = viewModel::triggerPhase2Analysis,
+                        onAuthorClick = viewModel::selectAuthorFilter,
+                        onMoodClick = viewModel::selectMoodFilter
                     )
                 } else {
                     Scaffold(
@@ -270,8 +303,7 @@ class MainActivity : ComponentActivity() {
                                     authors = authors,
                                     domains = domains,
                                     onBoardClick = { boardId ->
-                                        viewModel.selectBoardFilter(boardId)
-                                        currentBottomTab = 0
+                                        selectedBoardIdForDetail = boardId
                                     },
                                     onAuthorClick = { author ->
                                         viewModel.selectAuthorFilter(author)
@@ -281,7 +313,9 @@ class MainActivity : ComponentActivity() {
                                         viewModel.selectDomainFilter(domain)
                                         currentBottomTab = 0
                                     },
-                                    onCreateBoard = viewModel::createBoard
+                                    onCreateBoard = viewModel::createBoard,
+                                    onUpdateBoard = viewModel::updateBoard,
+                                    onToggleBoardQuickSave = viewModel::setBoardQuickSaveVisibility
                                 )
 
                                 2 -> Phase3HistoricalImportScreen(
@@ -313,6 +347,7 @@ class MainActivity : ComponentActivity() {
                                     boards = allBoards,
                                     moods = allMoods,
                                     onDismiss = { showAddPinSheet = false },
+                                    onCreateBoard = { name -> viewModel.createQuickSaveBoard(name) },
                                     onSavePin = { url, author, caption, boardIds, moodIds, notes, runPhase2 ->
                                         showAddPinSheet = false
                                         viewModel.addManualPin(

@@ -13,6 +13,7 @@ import com.bluemachines.instapin.data.local.ReelLinkCaptureMode
 import com.bluemachines.instapin.data.local.UserSettings
 import com.bluemachines.instapin.data.local.entity.AuthorSummary
 import com.bluemachines.instapin.data.local.entity.Board
+import com.bluemachines.instapin.data.local.entity.BoardSection
 import com.bluemachines.instapin.data.local.entity.BoardWithCount
 import com.bluemachines.instapin.data.local.entity.CaptureSource
 import com.bluemachines.instapin.data.local.entity.DomainSummary
@@ -111,6 +112,9 @@ class MainViewModel(
     val allBoards: StateFlow<List<Board>> = repository.allBoardsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val allSections: StateFlow<List<BoardSection>> = repository.allSectionsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val allMoods: StateFlow<List<MoodTag>> = repository.allMoodsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -194,6 +198,46 @@ class MainViewModel(
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.createBoard(name, emoji, colorHex, description, pinToRadial, autoAnalyzePhase2)
+        }
+    }
+
+    suspend fun createQuickSaveBoard(name: String): Long {
+        return repository.createQuickSaveBoard(name)
+    }
+
+    fun updateBoard(board: Board) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateBoard(board)
+        }
+    }
+
+    fun setBoardQuickSaveVisibility(boardId: Long, visibleInSaveSheet: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.setBoardQuickSaveVisibility(boardId, visibleInSaveSheet)
+        }
+    }
+
+    fun createBoardSection(boardId: Long, name: String, emoji: String = "📂") {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.createBoardSection(boardId, name, emoji)
+        }
+    }
+
+    fun copyPinToBoard(pinId: Long, targetBoardId: Long, targetSectionId: Long? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.copyPinToBoard(pinId, targetBoardId, targetSectionId)
+        }
+    }
+
+    fun movePinToBoard(pinId: Long, sourceBoardId: Long?, targetBoardId: Long, targetSectionId: Long? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.movePinToBoard(pinId, sourceBoardId, targetBoardId, targetSectionId)
+        }
+    }
+
+    fun assignPinToSection(pinId: Long, boardId: Long, sectionId: Long?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.assignPinToSection(pinId, boardId, sectionId)
         }
     }
 
