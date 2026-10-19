@@ -22,6 +22,8 @@ import com.bluemachines.instapin.data.local.entity.MoodTag
 import com.bluemachines.instapin.data.local.entity.PopulatedVideoPin
 import com.bluemachines.instapin.data.local.entity.VideoPin
 import com.bluemachines.instapin.data.remote.ApiConnectionTestResult
+import com.bluemachines.instapin.data.remote.InstagramChatCaptureService
+import com.bluemachines.instapin.data.remote.InstagramChatCaptureState
 import com.bluemachines.instapin.data.repository.PinRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,6 +60,25 @@ class MainViewModel(
 
     private val _aiTestStatus = MutableStateFlow<ApiConnectionTestResult?>(null)
     val aiTestStatus: StateFlow<ApiConnectionTestResult?> = _aiTestStatus.asStateFlow()
+
+    private val instagramChatService = InstagramChatCaptureService()
+    private val _instagramChatState = MutableStateFlow(InstagramChatCaptureState())
+    val instagramChatState: StateFlow<InstagramChatCaptureState> = _instagramChatState.asStateFlow()
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            val saved = preferences.getSettings()
+            if (saved.instagramChatDeviceToken.isNotBlank()) {
+                _instagramChatState.value = InstagramChatCaptureState(
+                    isConnected = saved.instagramChatConnected,
+                    pairingCode = saved.instagramChatPairingCode,
+                    pairingExpiresAt = saved.instagramChatPairingExpiresAt,
+                    statusMessage = if (saved.instagramChatConnected) "Connected • checking for new Reels" else "Waiting for pairing code"
+                )
+                refreshInstagramChatCapture()
+            }
+        }
+    }
 
     val allPins: StateFlow<List<PopulatedVideoPin>> = repository.allPinsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -424,6 +445,91 @@ class MainViewModel(
             }.onFailure { err ->
                 onComplete("Restore failed: ${err.message}")
             }
+        }
+    }
+
+    fun connectInstagramChatCapture() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _instagramChatState.value = _instagramChatState.value.copy(
+                isLoading = true,
+                statusMessage = "Creating secure pairing code…"
+            )
+            runCatching { instagramChatService.createPairing() }
+                .onSuccess { pairing ->
+                    preferences.saveInstagramChatPairing(
+                        deviceToken = pairing.deviceToken,
+                        pairingCode = pairing.pairingCode,
+                        expiresAt = pairing.expiresAt
+                    )
+                    _instagramChatState.value = InstagramChatCaptureState(
+                        pairingCode = pairing.pairingCode,
+                        pairingExpiresAt = pairing.expiresAt,
+                        instagramChatUrl = pairing.instagramChatUrl,
+                        statusMessage = "Send this code to @${pairing.instagramUsername}"
+                    )
+                }
+                .onFailure { error ->
+                    _instagramChatState.value = InstagramChatCaptureState(
+                        statusMessage = "Could not create pairing code: ${error.message?.take(80) ?: "try again"}"
+                    )
+                }
+        }
+    }
+
+    fun refreshInstagramChatCapture() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val saved = preferences.getSettings()
+            val token = saved.instagramChatDeviceToken
+            if (token.isBlank()) return@launch
+            _instagramChatState.value = _instagramChatState.value.copy(isLoading = true)
+            runCatching {
+                val pairing = instagramChatService.getPairingStatus(token)
+                if (pairing.paired && !saved.instagramChatConnected) preferences.markInstagramChatConnected()
+                val inbox = if (pairing.paired) instagramChatService.getInbox(token) else null
+                var imported = 0
+                inbox?.items?.forEach { item ->
+                    repository.saveOrUpdateInstagramPin(
+                        rawUrl = item.instagramUrl,
+                        screenCaption = item.title,
+                        userNotes = item.note,
+                        captureSource = CaptureSource.INSTAGRAM_DM_BOT
+                    )
+                    instagramChatService.acknowledge(token, item.id)
+                    imported++
+                }
+                pairing.paired to imported
+            }.onSuccess { (paired, imported) ->
+                _instagramChatState.value = _instagramChatState.value.copy(
+                    isLoading = false,
+                    isConnected = paired,
+                    pairingCode = if (paired || System.currentTimeMillis() > saved.instagramChatPairingExpiresAt) {
+                        ""
+                    } else {
+                        saved.instagramChatPairingCode
+                    },
+                    statusMessage = when {
+                        imported > 0 -> "$imported new Reel${if (imported == 1) "" else "s"} added to InstaPin"
+                        paired -> "Connected • no new Reels"
+                        System.currentTimeMillis() > saved.instagramChatPairingExpiresAt -> "Pairing code expired • create a new one"
+                        else -> "Waiting for the code to be sent on Instagram"
+                    },
+                    lastSyncedCount = imported
+                )
+            }.onFailure { error ->
+                _instagramChatState.value = _instagramChatState.value.copy(
+                    isLoading = false,
+                    statusMessage = "Sync unavailable: ${error.message?.take(80) ?: "try again"}"
+                )
+            }
+        }
+    }
+
+    fun disconnectInstagramChatCapture() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val token = preferences.getSettings().instagramChatDeviceToken
+            if (token.isNotBlank()) runCatching { instagramChatService.disconnect(token) }
+            preferences.clearInstagramChatPairing()
+            _instagramChatState.value = InstagramChatCaptureState(statusMessage = "Disconnected")
         }
     }
 

@@ -25,8 +25,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessibilityNew
 import androidx.compose.material.icons.filled.Backup
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Layers
@@ -35,6 +37,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -79,9 +82,11 @@ import com.bluemachines.instapin.data.local.UserSettings
 import com.bluemachines.instapin.data.remote.ApiConnectionTestResult
 import com.bluemachines.instapin.data.remote.AppUpdaterService
 import com.bluemachines.instapin.data.remote.GitHubReleaseInfo
+import com.bluemachines.instapin.data.remote.InstagramChatCaptureState
 import com.bluemachines.instapin.data.repository.PinRepository
 import com.bluemachines.instapin.service.FloatingOverlayService
 import com.bluemachines.instapin.service.InstaPinAccessibilityService
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -89,6 +94,10 @@ import kotlinx.coroutines.launch
 fun MotoG84OnboardingAndSettingsScreen(
     settings: UserSettings,
     aiTestResult: ApiConnectionTestResult? = null,
+    instagramChatState: InstagramChatCaptureState = InstagramChatCaptureState(),
+    onConnectInstagramChat: () -> Unit = {},
+    onRefreshInstagramChat: () -> Unit = {},
+    onDisconnectInstagramChat: () -> Unit = {},
     onSaveMultiProviderAi: (AiProviderType, String, String, Int, String, String) -> Unit = { _, _, _, _, _, _ -> },
     onTestAiConnection: (AiProviderType, String, String, Int, String, String) -> Unit = { _, _, _, _, _, _ -> },
     onSaveVisualAppearance: (AppThemePreset, FeedLayoutMode, FontScalePreset) -> Unit = { _, _, _ -> },
@@ -137,6 +146,17 @@ fun MotoG84OnboardingAndSettingsScreen(
             .onFailure {
                 updateStatusText = "Ready for 1-Tap GitHub Update or Time-Machine Rollback"
             }
+    }
+
+    LaunchedEffect(instagramChatState.pairingCode, instagramChatState.isConnected) {
+        while (
+            instagramChatState.pairingCode.isNotBlank() &&
+            !instagramChatState.isConnected &&
+            System.currentTimeMillis() < instagramChatState.pairingExpiresAt
+        ) {
+            delay(3_000L)
+            onRefreshInstagramChat()
+        }
     }
 
     Column(
@@ -730,6 +750,137 @@ fun MotoG84OnboardingAndSettingsScreen(
                         modifier = Modifier.weight(1.3f)
                     ) {
                         Text("Save Encrypted Key", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
+                    }
+                }
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Chat,
+                        contentDescription = null,
+                        tint = if (instagramChatState.isConnected) Color(0xFF10B981) else Color(0xFFE60023),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Instagram Chat Capture",
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp
+                        )
+                        Text(
+                            text = instagramChatState.statusMessage,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+
+                if (instagramChatState.isLoading) {
+                    Spacer(Modifier.height(10.dp))
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "Send a Reel to @instapin_app and find it waiting here. The stable Copy Link workflow remains available.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                    fontSize = 12.sp
+                )
+
+                if (instagramChatState.pairingCode.isNotBlank() && !instagramChatState.isConnected) {
+                    Spacer(Modifier.height(12.dp))
+                    Surface(
+                        color = Color(0xFFE60023).copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text("Send this code in the InstaPin Instagram chat", fontSize = 12.sp)
+                            Text(
+                                text = instagramChatState.pairingCode,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 24.sp
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("InstaPin pairing code", instagramChatState.pairingCode))
+                                Toast.makeText(context, "Pairing code copied", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Copy Code")
+                        }
+                        Button(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("InstaPin pairing code", instagramChatState.pairingCode))
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(instagramChatState.instagramChatUrl)))
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE60023)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Chat, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Open Chat", color = Color.White)
+                        }
+                    }
+                } else if (instagramChatState.isConnected) {
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = onRefreshInstagramChat,
+                            enabled = !instagramChatState.isLoading,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Sync Reels", color = Color.White)
+                        }
+                        OutlinedButton(
+                            onClick = onDisconnectInstagramChat,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Disconnect")
+                        }
+                    }
+                } else {
+                    Spacer(Modifier.height(12.dp))
+                    Button(
+                        onClick = onConnectInstagramChat,
+                        enabled = !instagramChatState.isLoading,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE60023)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Chat, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Connect Instagram Chat", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
             }

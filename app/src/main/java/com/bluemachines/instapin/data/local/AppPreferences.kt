@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.bluemachines.instapin.BuildConfig
@@ -68,6 +69,10 @@ data class UserSettings(
     val themePreset: AppThemePreset = AppThemePreset.OBSIDIAN,
     val feedLayoutMode: FeedLayoutMode = FeedLayoutMode.PINTEREST_MASONRY,
     val fontScalePreset: FontScalePreset = FontScalePreset.STANDARD,
+    val instagramChatDeviceToken: String = "",
+    val instagramChatPairingCode: String = "",
+    val instagramChatPairingExpiresAt: Long = 0L,
+    val instagramChatConnected: Boolean = false,
     val previousInstalledVersion: String = "v1.0.8 (Previous Build)",
     val lastRecordedCurrentVersion: String = BuildConfig.VERSION_NAME
 )
@@ -90,6 +95,10 @@ class AppPreferences(private val context: Context) {
         private val KEY_THEME_PRESET = stringPreferencesKey("theme_preset")
         private val KEY_LAYOUT_MODE = stringPreferencesKey("feed_layout_mode")
         private val KEY_FONT_SCALE = stringPreferencesKey("font_scale_preset")
+        private val KEY_ENCRYPTED_INSTAGRAM_CHAT_TOKEN = stringPreferencesKey("encrypted_instagram_chat_token")
+        private val KEY_INSTAGRAM_CHAT_PAIRING_CODE = stringPreferencesKey("instagram_chat_pairing_code")
+        private val KEY_INSTAGRAM_CHAT_PAIRING_EXPIRES = longPreferencesKey("instagram_chat_pairing_expires")
+        private val KEY_INSTAGRAM_CHAT_CONNECTED = booleanPreferencesKey("instagram_chat_connected")
         private val KEY_PREVIOUS_VERSION = stringPreferencesKey("previous_installed_version")
         private val KEY_LAST_RECORDED_VERSION = stringPreferencesKey("last_recorded_version")
     }
@@ -136,6 +145,12 @@ class AppPreferences(private val context: Context) {
             themePreset = theme,
             feedLayoutMode = layoutMode,
             fontScalePreset = fontScale,
+            instagramChatDeviceToken = AndroidKeystoreCrypto.decryptSecret(
+                prefs[KEY_ENCRYPTED_INSTAGRAM_CHAT_TOKEN].orEmpty()
+            ),
+            instagramChatPairingCode = prefs[KEY_INSTAGRAM_CHAT_PAIRING_CODE].orEmpty(),
+            instagramChatPairingExpiresAt = prefs[KEY_INSTAGRAM_CHAT_PAIRING_EXPIRES] ?: 0L,
+            instagramChatConnected = prefs[KEY_INSTAGRAM_CHAT_CONNECTED] ?: false,
             previousInstalledVersion = prefs[KEY_PREVIOUS_VERSION] ?: "v1.0.8 (Previous Build)",
             lastRecordedCurrentVersion = prefs[KEY_LAST_RECORDED_VERSION] ?: BuildConfig.VERSION_NAME
         )
@@ -231,6 +246,32 @@ class AppPreferences(private val context: Context) {
         context.dataStore.edit {
             it[KEY_BUBBLE_RIGHT] = isRight
             it[KEY_BUBBLE_Y_PERCENT] = verticalPercent.coerceIn(15, 85)
+        }
+    }
+
+    suspend fun saveInstagramChatPairing(deviceToken: String, pairingCode: String, expiresAt: Long) {
+        context.dataStore.edit {
+            it[KEY_ENCRYPTED_INSTAGRAM_CHAT_TOKEN] = AndroidKeystoreCrypto.encryptSecret(deviceToken)
+            it[KEY_INSTAGRAM_CHAT_PAIRING_CODE] = pairingCode
+            it[KEY_INSTAGRAM_CHAT_PAIRING_EXPIRES] = expiresAt
+            it[KEY_INSTAGRAM_CHAT_CONNECTED] = false
+        }
+    }
+
+    suspend fun markInstagramChatConnected() {
+        context.dataStore.edit {
+            it[KEY_INSTAGRAM_CHAT_CONNECTED] = true
+            it.remove(KEY_INSTAGRAM_CHAT_PAIRING_CODE)
+            it.remove(KEY_INSTAGRAM_CHAT_PAIRING_EXPIRES)
+        }
+    }
+
+    suspend fun clearInstagramChatPairing() {
+        context.dataStore.edit {
+            it.remove(KEY_ENCRYPTED_INSTAGRAM_CHAT_TOKEN)
+            it.remove(KEY_INSTAGRAM_CHAT_PAIRING_CODE)
+            it.remove(KEY_INSTAGRAM_CHAT_PAIRING_EXPIRES)
+            it.remove(KEY_INSTAGRAM_CHAT_CONNECTED)
         }
     }
 }

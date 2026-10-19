@@ -8,3 +8,6 @@ local.properties
 *.apk
 *.aab
 *.jks
+cloudflare/**/node_modules/
+cloudflare/**/.wrangler/
+cloudflare/**/.dev.vars

@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "instapin-instagram-webhook",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-18",
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "INBOX_DB",
+      "database_name": "instapin-inbox",
+      "database_id": "e768d5a9-e892-4a4c-8346-c5c765c702e5",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

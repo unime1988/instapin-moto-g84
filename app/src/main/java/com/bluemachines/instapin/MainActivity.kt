@@ -110,6 +110,7 @@ class MainActivity : ComponentActivity() {
             val importBatches by viewModel.importBatches.collectAsState()
             val settings by viewModel.settings.collectAsState()
             val aiTestResult by viewModel.aiTestStatus.collectAsState()
+            val instagramChatState by viewModel.instagramChatState.collectAsState()
 
             val activeColorScheme = when (settings.themePreset) {
                 AppThemePreset.OBSIDIAN -> ObsidianColorScheme
@@ -341,6 +342,10 @@ class MainActivity : ComponentActivity() {
                                 3 -> MotoG84OnboardingAndSettingsScreen(
                                     settings = settings,
                                     aiTestResult = aiTestResult,
+                                    instagramChatState = instagramChatState,
+                                    onConnectInstagramChat = viewModel::connectInstagramChatCapture,
+                                    onRefreshInstagramChat = viewModel::refreshInstagramChatCapture,
+                                    onDisconnectInstagramChat = viewModel::disconnectInstagramChatCapture,
                                     onSaveMultiProviderAi = viewModel::saveMultiProviderAiSettings,
                                     onTestAiConnection = viewModel::testAiConnectionNow,
                                     onSaveVisualAppearance = viewModel::saveVisualAppearance,
