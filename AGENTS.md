@@ -61,3 +61,15 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - Android 10+ only lets the focused app read the clipboard, so clipboard reads happen in `ShareReceiverActivity` (on window focus), never in the overlay service.
 - Accessibility automation must never scroll or swipe the Reels feed (it advances to the next Reel). Only scroll containers holding share-sheet labels.
 - When capture fails on-device, ask the user for **Moto G84 Setup -> Last Reel Link Capture -> Copy diagnostics** — it lists the real Instagram labels/IDs at the failed step.
+
+### Instagram Chat Capture Bridge (`v1.0.25` / commit `35d1d8a`)
+- **Working flow:** In **Moto G84 Setup -> Instagram Chat Capture**, tap **Connect Instagram Chat** -> tap **Open Chat** (copies `IP-XXXX-XXXX`) -> send the code to `@instapin_app` on Instagram -> send any public Reel to `@instapin_app` (optionally with a board name or note) -> return to InstaPin and `MainActivity.onResume()` auto-syncs the Reel into Room (`CaptureSource.INSTAGRAM_DM_BOT`) and matches any board name in the note.
+- **Cloudflare backend (`cloudflare/instagram-webhook/`):**
+  - Worker: `instapin-instagram-webhook` (`https://instapin-instagram-webhook.unime1988.workers.dev`)
+  - D1 database: `instapin-inbox` (`INBOX_DB`, migrations in `cloudflare/instagram-webhook/migrations/`)
+  - Encrypted Worker secrets only: `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_APP_SECRET`, `META_APP_SECRET`, `INSTAGRAM_VERIFY_TOKEN` (never commit secrets or tokens).
+- **Rules for future changes:**
+  1. Keep Instagram Chat Capture additive — never remove or regress the manual **Copy link -> tap bubble -> pick category -> save** baseline (`v1.0.15` / `58c6a1f`).
+  2. Never download or store Reel video files on Cloudflare or on the phone; store only the permalink, metadata, and note.
+  3. Preserve `MainActivity.onResume()` auto-sync, share-time/late note staging (`staged_notes` + `pending_notes`), and note-to-board matching in `PinRepository.saveOrUpdateInstagramPin`.
+
