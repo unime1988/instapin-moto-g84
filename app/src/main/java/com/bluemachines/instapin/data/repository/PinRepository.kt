@@ -202,8 +202,21 @@ class PinRepository(
         val targetBoardIds = if (explicitBoardIds.isNotEmpty()) {
             explicitBoardIds
         } else {
-            val matchedIds = localClassification.suggestedBoards.mapNotNull { suggestedName ->
-                allBoards.firstOrNull { it.name.equals(suggestedName, ignoreCase = true) }?.id
+            val cleanNote = userNotes.trim()
+            val noteMatchedIds = if (cleanNote.isEmpty()) {
+                emptyList()
+            } else {
+                allBoards.filter { board ->
+                    cleanNote.equals(board.name, ignoreCase = true) ||
+                        cleanNote.contains(board.name, ignoreCase = true)
+                }.map { it.id }
+            }
+            val matchedIds = if (noteMatchedIds.isNotEmpty()) {
+                noteMatchedIds
+            } else {
+                localClassification.suggestedBoards.mapNotNull { suggestedName ->
+                    allBoards.firstOrNull { it.name.equals(suggestedName, ignoreCase = true) }?.id
+                }
             }
             matchedIds.ifEmpty { listOfNotNull(allBoards.firstOrNull()?.id) }
         }

@@ -88,6 +88,11 @@ class MainActivity : ComponentActivity() {
         MainViewModel.Factory(app.repository, app.preferences)
     }
 
+    override fun onResume() {
+        super.onResume()
+        viewModel.refreshInstagramChatCapture()
+    }
+
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

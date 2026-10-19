@@ -137,10 +137,20 @@ async function processTextMessage(event: MessagingEvent, env: Env): Promise<void
   const pending = await env.INBOX_DB.prepare(
     "SELECT inbox_item_id FROM pending_notes WHERE sender_id = ? AND expires_at > ?"
   ).bind(senderId, Date.now()).first<{ inbox_item_id: string }>();
-  if (!pending) return;
+  if (!pending) {
+    const identity = await env.INBOX_DB.prepare(
+      "SELECT device_id FROM instagram_identities WHERE sender_id = ?"
+    ).bind(senderId).first<{ device_id: string }>();
+    if (!identity) return;
+    await env.INBOX_DB.prepare(
+      "INSERT INTO staged_notes(sender_id, note, expires_at) VALUES(?, ?, ?) ON CONFLICT(sender_id) DO UPDATE SET note = excluded.note, expires_at = excluded.expires_at"
+    ).bind(senderId, text.slice(0, 2000), Date.now() + 90_000).run();
+    return;
+  }
 
   await env.INBOX_DB.batch([
-    env.INBOX_DB.prepare("UPDATE inbox_items SET note = ? WHERE id = ?").bind(text.slice(0, 2000), pending.inbox_item_id),
+    env.INBOX_DB.prepare("UPDATE inbox_items SET note = ?, acknowledged_at = NULL WHERE id = ?")
+      .bind(text.slice(0, 2000), pending.inbox_item_id),
     env.INBOX_DB.prepare("DELETE FROM pending_notes WHERE sender_id = ?").bind(senderId)
   ]);
   await sendInstagramMessage(env, accountId, senderId, "Note added. Open InstaPin whenever you are ready to organize it.");
@@ -163,13 +173,17 @@ async function processReelMessage(event: MessagingEvent, env: Env): Promise<void
   }
 
   const now = Date.now();
+  const staged = await env.INBOX_DB.prepare(
+    "SELECT note FROM staged_notes WHERE sender_id = ? AND expires_at > ?"
+  ).bind(senderId, now).first<{ note: string }>();
+  const initialNote = event.message?.text?.trim().slice(0, 2000) || staged?.note || "";
   const existing = await env.INBOX_DB.prepare(
     "SELECT id FROM inbox_items WHERE meta_message_id = ?"
   ).bind(messageId).first<{ id: string }>();
   const itemId = existing?.id ?? crypto.randomUUID();
   await env.INBOX_DB.batch([
     env.INBOX_DB.prepare(
-      "INSERT OR IGNORE INTO inbox_items(id, device_id, meta_message_id, instagram_url, reel_video_id, title, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)"
+      "INSERT OR IGNORE INTO inbox_items(id, device_id, meta_message_id, instagram_url, reel_video_id, title, note, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)"
     ).bind(
       itemId,
       identity.device_id,
@@ -177,13 +191,20 @@ async function processReelMessage(event: MessagingEvent, env: Env): Promise<void
       reelUrl,
       attachment?.payload?.reel_video_id ?? null,
       attachment?.payload?.title?.slice(0, 1000) ?? "",
+      initialNote,
       now
     ),
+    env.INBOX_DB.prepare("DELETE FROM staged_notes WHERE sender_id = ?").bind(senderId),
     env.INBOX_DB.prepare(
       "INSERT INTO pending_notes(sender_id, inbox_item_id, expires_at) VALUES(?, ?, ?) ON CONFLICT(sender_id) DO UPDATE SET inbox_item_id = excluded.inbox_item_id, expires_at = excluded.expires_at"
     ).bind(senderId, itemId, now + NOTE_TTL_MS)
   ]);
-  await sendInstagramMessage(env, accountId, senderId, "Reel saved. Reply within 10 minutes if you want to add a note.");
+  await sendInstagramMessage(
+    env,
+    accountId,
+    senderId,
+    initialNote ? "Reel and note saved. Open InstaPin to view it." : "Reel saved. Reply with a board name or note within 10 minutes."
+  );
 }
 
 async function processWebhook(payload: any, env: Env): Promise<void> {
