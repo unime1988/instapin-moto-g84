@@ -8,6 +8,7 @@ import android.os.Build
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.bluemachines.instapin.BuildConfig
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -62,7 +63,7 @@ class InstaPinAccessibilityService : AccessibilityService() {
 
     companion object {
         const val INSTAGRAM_PACKAGE = "com.instagram.android"
-        const val INSTAPIN_PACKAGE = "com.bluemachines.instapin"
+        val INSTAPIN_PACKAGE = BuildConfig.APPLICATION_ID
 
         private val _screenContext = MutableStateFlow(LiveInstagramScreenContext())
         val screenContext: StateFlow<LiveInstagramScreenContext> = _screenContext.asStateFlow()

@@ -1,6 +1,7 @@
 package com.bluemachines.instapin
 
 import android.app.Application
+import com.bluemachines.instapin.data.analytics.AnalyticsClient
 import com.bluemachines.instapin.data.local.AppDatabase
 import com.bluemachines.instapin.data.local.AppPreferences
 import com.bluemachines.instapin.data.repository.PinRepository
@@ -27,6 +28,7 @@ class InstaPinApp : Application() {
             database = database,
             preferences = preferences
         )
+        AnalyticsClient.init(preferences)
         CoroutineScope(Dispatchers.IO).launch {
             preferences.syncInstalledVersionOnStartup()
         }

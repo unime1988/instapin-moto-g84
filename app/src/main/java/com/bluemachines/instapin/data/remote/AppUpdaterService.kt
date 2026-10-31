@@ -8,6 +8,7 @@ import android.provider.Settings
 import androidx.core.content.FileProvider
 import com.bluemachines.instapin.BuildConfig
 import com.bluemachines.instapin.InstaPinApp
+import com.bluemachines.instapin.data.analytics.AnalyticsClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -123,6 +124,7 @@ object AppUpdaterService {
      * Immediately triggers Android Package Installer on the cached previous working APK (`InstaPin-previous-working.apk`).
      */
     suspend fun triggerLocalRollbackInstall(context: Context): Result<File> = withContext(Dispatchers.IO) {
+        AnalyticsClient.track("rollback_started")
         runCatching {
             ensureInstallPackagesPermission(context)
             val rollbackFile = File(File(context.filesDir, "rollback"), "InstaPin-previous-working.apk")
@@ -135,6 +137,7 @@ object AppUpdaterService {
     }
 
     suspend fun checkLatestRelease(): Result<GitHubReleaseInfo> = withContext(Dispatchers.IO) {
+        AnalyticsClient.track("update_check")
         runCatching {
             val request = Request.Builder()
                 .url(RELEASES_LIST_API)
@@ -213,6 +216,7 @@ object AppUpdaterService {
         snapshotBeforeInstall: Boolean = true,
         onProgressPercent: (Int) -> Unit = {}
     ): Result<File> = withContext(Dispatchers.IO) {
+        AnalyticsClient.track("update_download_started")
         runCatching {
             ensureInstallPackagesPermission(context)
 

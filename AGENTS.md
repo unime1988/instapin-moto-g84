@@ -49,6 +49,14 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 3. (Optional) Paste your **Google Gemini API Key** (`AIza...`) in the AI Configuration card and tap **Save AI Settings**.
 4. Tap **Start Hover Bubble** and open Instagram Reels!
 
+### Anonymous Usage Analytics (`data/analytics/AnalyticsClient.kt` + worker `/analytics`)
+- **Design (privacy-first):** named events + scalar props only (counts, enum names, booleans) under a random per-install UUID — never URLs, captions, notes, board/mood names, handles, search text, tokens, or clipboard content. The prop sanitizer in `AnalyticsClient` drops any content-shaped key (substring denylist: url, caption, note, query, name, token, file, …) before anything leaves the device.
+- **Opt-out:** `Settings → Share Anonymous Usage Stats` toggle (`UserSettings.analyticsEnabled`, default on). Disabling sends one consent event, flushes, then clears the local queue.
+- **Queue:** events persist as JSON in DataStore (`analytics_event_queue`, cap 300), flush at ≥15 queued or on `MainActivity.onStop`.
+- **Backend:** same `instapin-instagram-webhook` worker + `instapin-inbox` D1 (`analytics_events` table, migration `0003_analytics.sql`). `POST /analytics` gated by `X-Analytics-Key: instapin-analytics-v1`; `GET /analytics/dashboard` serves an HTML dashboard (open anonymous aggregates, or gated by `ANALYTICS_ADMIN_KEY` secret if set).
+- **Deploy steps (needs wrangler auth):** `cd cloudflare/instagram-webhook && wrangler d1 migrations apply instapin-inbox --remote && npm run deploy`.
+- **Rules for future changes:** track only actions with enum/count/bool props — never user content. Event names must match `^[a-z0-9_]{1,40}$`, prop keys `^[a-z0-9_]{1,30}$`.
+
 ### Protected Stable Baseline (`v1.0.15` / commit `58c6a1f`)
 - **Stable working flow:** In Instagram, manually tap **Share -> Copy link** on the Reel -> tap the InstaPin floating bubble -> `ShareReceiverActivity` reads the copied Reel URL on window focus -> tap a category/board -> save.
 - **Rules for future changes:**

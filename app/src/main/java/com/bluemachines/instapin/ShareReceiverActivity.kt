@@ -12,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
+import com.bluemachines.instapin.data.analytics.AnalyticsClient
 import com.bluemachines.instapin.data.local.entity.CaptureSource
 import com.bluemachines.instapin.data.remote.InstagramMetadataExtractor
 import com.bluemachines.instapin.service.FloatingOverlayService
@@ -180,6 +181,16 @@ class ShareReceiverActivity : ComponentActivity() {
             urlCameFromShareIntent = false
             capturedInstagramUrl = readClipboardInstagramUrl(requireFresh = true).orEmpty()
         }
+
+        AnalyticsClient.track(
+            "quick_save_opened",
+            "entry" to when {
+                fromFloatingPin -> "floating_bubble"
+                !fromShare.isNullOrBlank() -> "share_intent"
+                else -> "clipboard"
+            },
+            "has_url" to capturedInstagramUrl.isNotBlank()
+        )
     }
 
     override fun onResume() {

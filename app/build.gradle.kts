@@ -8,15 +8,18 @@ plugins {
 
 android {
     namespace = "com.bluemachines.instapin"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.bluemachines.instapin"
+        // Play Console app is registered as com.instapin.app; the release AAB overrides
+        // via PLAY_APPLICATION_ID env. Debug/sideload builds keep the original package.
+        applicationId = System.getenv("PLAY_APPLICATION_ID") ?: "com.bluemachines.instapin"
         minSdk = 29 // Android 10+; Moto G84 5G runs Android 13/14 (API 33/34)
-        targetSdk = 34
+        targetSdk = 36 // Play Console requires API 36 for new apps/updates since Aug 31 2026
         // Fixed versionCode = 100 across all builds allows Android PackageInstaller to perform
         // 1-Tap in-place rollbacks/downgrades AND upgrades without uninstalling!
-        versionCode = 100
+        // Play Console uploads override via PLAY_VERSION_CODE env (must be unique + increasing).
+        versionCode = (System.getenv("PLAY_VERSION_CODE") ?: "100").toInt()
         versionName = "1.0.${System.getenv("GITHUB_RUN_NUMBER") ?: "9"}"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -32,6 +35,12 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
+        create("release") {
+            storeFile = file("keystore/instapin-upload.keystore")
+            storePassword = System.getenv("INSTAPIN_UPLOAD_STORE_PASSWORD") ?: "Q0KEGcjQaHlPXfCFpM3Q"
+            keyAlias = "instapin"
+            keyPassword = System.getenv("INSTAPIN_UPLOAD_KEY_PASSWORD") ?: "BewY2P3BH22XqaAH11pw"
+        }
     }
 
     buildTypes {
@@ -39,7 +48,7 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

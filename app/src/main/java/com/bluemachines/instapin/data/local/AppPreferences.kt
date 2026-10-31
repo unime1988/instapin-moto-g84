@@ -74,7 +74,8 @@ data class UserSettings(
     val instagramChatPairingExpiresAt: Long = 0L,
     val instagramChatConnected: Boolean = false,
     val previousInstalledVersion: String = "v1.0.8 (Previous Build)",
-    val lastRecordedCurrentVersion: String = BuildConfig.VERSION_NAME
+    val lastRecordedCurrentVersion: String = BuildConfig.VERSION_NAME,
+    val analyticsEnabled: Boolean = true
 )
 
 class AppPreferences(private val context: Context) {
@@ -101,6 +102,9 @@ class AppPreferences(private val context: Context) {
         private val KEY_INSTAGRAM_CHAT_CONNECTED = booleanPreferencesKey("instagram_chat_connected")
         private val KEY_PREVIOUS_VERSION = stringPreferencesKey("previous_installed_version")
         private val KEY_LAST_RECORDED_VERSION = stringPreferencesKey("last_recorded_version")
+        private val KEY_ANALYTICS_ENABLED = booleanPreferencesKey("analytics_enabled")
+        private val KEY_ANALYTICS_INSTALL_ID = stringPreferencesKey("analytics_install_id")
+        private val KEY_ANALYTICS_QUEUE = stringPreferencesKey("analytics_event_queue")
     }
 
     val settingsFlow: Flow<UserSettings> = context.dataStore.data.map { prefs ->
@@ -152,7 +156,8 @@ class AppPreferences(private val context: Context) {
             instagramChatPairingExpiresAt = prefs[KEY_INSTAGRAM_CHAT_PAIRING_EXPIRES] ?: 0L,
             instagramChatConnected = prefs[KEY_INSTAGRAM_CHAT_CONNECTED] ?: false,
             previousInstalledVersion = prefs[KEY_PREVIOUS_VERSION] ?: "v1.0.8 (Previous Build)",
-            lastRecordedCurrentVersion = prefs[KEY_LAST_RECORDED_VERSION] ?: BuildConfig.VERSION_NAME
+            lastRecordedCurrentVersion = prefs[KEY_LAST_RECORDED_VERSION] ?: BuildConfig.VERSION_NAME,
+            analyticsEnabled = prefs[KEY_ANALYTICS_ENABLED] ?: true
         )
     }
 
@@ -272,6 +277,31 @@ class AppPreferences(private val context: Context) {
             it.remove(KEY_INSTAGRAM_CHAT_PAIRING_CODE)
             it.remove(KEY_INSTAGRAM_CHAT_PAIRING_EXPIRES)
             it.remove(KEY_INSTAGRAM_CHAT_CONNECTED)
+        }
+    }
+
+    suspend fun isAnalyticsEnabled(): Boolean =
+        context.dataStore.data.first()[KEY_ANALYTICS_ENABLED] ?: true
+
+    suspend fun setAnalyticsEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_ANALYTICS_ENABLED] = enabled }
+    }
+
+    /** Random per-install UUID used only to count distinct installs; not tied to any identity. */
+    suspend fun getOrCreateAnalyticsInstallId(): String {
+        val existing = context.dataStore.data.first()[KEY_ANALYTICS_INSTALL_ID]
+        if (!existing.isNullOrBlank()) return existing
+        val created = java.util.UUID.randomUUID().toString()
+        context.dataStore.edit { it[KEY_ANALYTICS_INSTALL_ID] = created }
+        return created
+    }
+
+    suspend fun loadPendingAnalyticsEvents(): String =
+        context.dataStore.data.first()[KEY_ANALYTICS_QUEUE].orEmpty()
+
+    suspend fun savePendingAnalyticsEvents(rawJson: String) {
+        context.dataStore.edit {
+            if (rawJson.isBlank()) it.remove(KEY_ANALYTICS_QUEUE) else it[KEY_ANALYTICS_QUEUE] = rawJson
         }
     }
 }

@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.bluemachines.instapin.data.analytics.AnalyticsClient
 import com.bluemachines.instapin.data.local.AppThemePreset
 import com.bluemachines.instapin.data.local.FeedLayoutMode
 import com.bluemachines.instapin.service.FloatingOverlayService
@@ -95,6 +96,7 @@ class MainActivity : ComponentActivity() {
         if (Settings.canDrawOverlays(this) && !FloatingOverlayService.isRunning) {
             FloatingOverlayService.start(this)
         }
+        AnalyticsClient.track("app_opened")
 
         setContent {
             val filteredPins by viewModel.filteredPins.collectAsState()
@@ -169,7 +171,10 @@ class MainActivity : ComponentActivity() {
                         onCreateSection = { boardId, sectionName ->
                             viewModel.createBoardSection(boardId, sectionName)
                         },
-                        onOpenPinDetail = { pinId -> selectedPinIdForDetail = pinId },
+                        onOpenPinDetail = { pinId ->
+                            AnalyticsClient.track("pin_opened", "from" to "board")
+                            selectedPinIdForDetail = pinId
+                        },
                         onTriggerPhase2 = viewModel::triggerPhase2Analysis,
                         onAuthorClick = viewModel::selectAuthorFilter,
                         onMoodClick = viewModel::selectMoodFilter
@@ -238,19 +243,28 @@ class MainActivity : ComponentActivity() {
                             NavigationBar(containerColor = activeColorScheme.surface) {
                                 NavigationBarItem(
                                     selected = currentBottomTab == 0,
-                                    onClick = { currentBottomTab = 0 },
+                                    onClick = {
+                                        AnalyticsClient.track("screen_viewed", "tab" to "pins")
+                                        currentBottomTab = 0
+                                    },
                                     icon = { Icon(Icons.Default.Home, contentDescription = null) },
                                     label = { Text("Pins (${allPins.size})") }
                                 )
                                 NavigationBarItem(
                                     selected = currentBottomTab == 1,
-                                    onClick = { currentBottomTab = 1 },
+                                    onClick = {
+                                        AnalyticsClient.track("screen_viewed", "tab" to "boards")
+                                        currentBottomTab = 1
+                                    },
                                     icon = { Icon(Icons.Default.Dashboard, contentDescription = null) },
                                     label = { Text("Boards") }
                                 )
                                 NavigationBarItem(
                                     selected = currentBottomTab == 2,
-                                    onClick = { currentBottomTab = 2 },
+                                    onClick = {
+                                        AnalyticsClient.track("screen_viewed", "tab" to "import")
+                                        currentBottomTab = 2
+                                    },
                                     icon = {
                                         BadgedBox(
                                             badge = {
@@ -266,7 +280,10 @@ class MainActivity : ComponentActivity() {
                                 )
                                 NavigationBarItem(
                                     selected = currentBottomTab == 3,
-                                    onClick = { currentBottomTab = 3 },
+                                    onClick = {
+                                        AnalyticsClient.track("screen_viewed", "tab" to "settings")
+                                        currentBottomTab = 3
+                                    },
                                     icon = { Icon(Icons.Default.Settings, contentDescription = null) },
                                     label = { Text("Moto G84 Setup") }
                                 )
@@ -304,7 +321,10 @@ class MainActivity : ComponentActivity() {
                                     onSelectDateRange = viewModel::selectDateRange,
                                     onToggleOnlyAnalyzed = viewModel::toggleOnlyAnalyzed,
                                     onClearFilters = viewModel::clearAllFilters,
-                                    onOpenPinDetail = { pinId -> selectedPinIdForDetail = pinId },
+                                    onOpenPinDetail = { pinId ->
+                                        AnalyticsClient.track("pin_opened", "from" to "feed")
+                                        selectedPinIdForDetail = pinId
+                                    },
                                     onTriggerPhase2 = { pinId -> viewModel.triggerPhase2Analysis(pinId) }
                                 )
 
@@ -313,6 +333,7 @@ class MainActivity : ComponentActivity() {
                                     authors = authors,
                                     domains = domains,
                                     onBoardClick = { boardId ->
+                                        AnalyticsClient.track("board_opened")
                                         selectedBoardIdForDetail = boardId
                                     },
                                     onAuthorClick = { author ->
@@ -335,7 +356,10 @@ class MainActivity : ComponentActivity() {
                                     importBatches = importBatches,
                                     onApproveAllTriage = viewModel::approveAllPhase3Triage,
                                     onApproveSinglePin = viewModel::approveSinglePhase3Pin,
-                                    onOpenPinDetail = { pinId -> selectedPinIdForDetail = pinId },
+                                    onOpenPinDetail = { pinId ->
+                                        AnalyticsClient.track("pin_opened", "from" to "triage")
+                                        selectedPinIdForDetail = pinId
+                                    },
                                     onRunDemoImport = viewModel::runDemoSampleImportPhase3
                                 )
 
@@ -351,7 +375,8 @@ class MainActivity : ComponentActivity() {
                                     onSaveVisualAppearance = viewModel::saveVisualAppearance,
                                     onExportBackup = { cb -> viewModel.exportManualBackup(this@MainActivity, cb) },
                                     onRestoreBackup = { cb -> viewModel.restoreManualBackup(this@MainActivity, cb) },
-                                    onSaveOverlayPrefs = viewModel::saveOverlayPrefs
+                                    onSaveOverlayPrefs = viewModel::saveOverlayPrefs,
+                                    onToggleAnalytics = viewModel::setAnalyticsEnabled
                                 )
                             }
 
@@ -391,5 +416,10 @@ class MainActivity : ComponentActivity() {
             FloatingOverlayService.start(this)
         }
         viewModel.refreshInstagramChatCapture()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        AnalyticsClient.flush()
     }
 }

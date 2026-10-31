@@ -35,6 +35,7 @@ import com.bluemachines.instapin.InstaPinApp
 import com.bluemachines.instapin.MainActivity
 import com.bluemachines.instapin.R
 import com.bluemachines.instapin.ShareReceiverActivity
+import com.bluemachines.instapin.data.analytics.AnalyticsClient
 import com.bluemachines.instapin.data.local.ReelLinkCaptureMode
 import com.bluemachines.instapin.data.local.entity.Board
 import com.bluemachines.instapin.data.local.entity.CaptureSource
@@ -314,6 +315,11 @@ class FloatingOverlayService : LifecycleService(), SavedStateRegistryOwner, View
         audioTrack: String
     ) {
         val now = System.currentTimeMillis()
+        AnalyticsClient.track(
+            "bubble_action",
+            "mode" to if (preselectedBoardId == ShareReceiverActivity.NO_PRESELECTED_BOARD) "tap_sheet" else "radial_board",
+            "capture_mode" to (applicationContext as InstaPinApp).preferences.getSettings().reelLinkCaptureMode.name
+        )
         ShareReceiverActivity.pendingFloatingSave = ShareReceiverActivity.PendingFloatingSave(
             preselectedBoardId = preselectedBoardId,
             author = author,

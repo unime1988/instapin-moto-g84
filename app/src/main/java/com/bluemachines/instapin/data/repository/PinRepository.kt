@@ -2,6 +2,7 @@ package com.bluemachines.instapin.data.repository
 
 import android.content.Context
 import com.bluemachines.instapin.BuildConfig
+import com.bluemachines.instapin.data.analytics.AnalyticsClient
 import com.bluemachines.instapin.data.local.AppDatabase
 import com.bluemachines.instapin.data.local.AppPreferences
 import com.bluemachines.instapin.data.local.entity.AuthorSummary
@@ -251,6 +252,18 @@ class PinRepository(
             enrichmentStatus = "Local save complete in ${localSaveElapsedMs}ms • enriching metadata in background…"
         )
 
+        AnalyticsClient.track(
+            "pin_saved",
+            "capture_source" to captureSource.name,
+            "boards_count" to targetBoardIds.size,
+            "moods_count" to targetMoodIds.size,
+            "has_note" to userNotes.isNotBlank(),
+            "is_update" to (existingPin != null),
+            "has_exact_link" to (normalizedUrl.contains("/reel/") ||
+                normalizedUrl.contains("/p/") || normalizedUrl.contains("/share/")),
+            "phase2_immediate" to runPhase2Immediately
+        )
+
         // Fire-and-forget background network enrichment (OpenGraph + BYOK AI + optional Phase 2)
         backgroundScope.launch {
             enrichSavedPinInBackground(
@@ -371,17 +384,38 @@ class PinRepository(
     suspend fun runPhase2DeepAnalysis(pinId: Long): VideoAnalysis? {
         val populated = pinDao.getPopulatedPinById(pinId) ?: return null
         val settings = preferences.getSettings()
-        val analysis = geminiAiService.analyzeVideoPhase2(
-            apiKey = settings.geminiApiKey,
-            model = settings.geminiModel,
-            pin = populated.pin,
-            creatorNiche = settings.creatorNicheDescription,
-            provider = settings.aiProvider,
-            scriptDurationSec = settings.scriptDurationSeconds,
-            scriptTone = settings.scriptToneAndLanguage
-        )
+        val analysisStartedAt = System.currentTimeMillis()
+        val analysis = runCatching {
+            geminiAiService.analyzeVideoPhase2(
+                apiKey = settings.geminiApiKey,
+                model = settings.geminiModel,
+                pin = populated.pin,
+                creatorNiche = settings.creatorNicheDescription,
+                provider = settings.aiProvider,
+                scriptDurationSec = settings.scriptDurationSeconds,
+                scriptTone = settings.scriptToneAndLanguage
+            )
+        }.getOrElse { err ->
+            AnalyticsClient.track(
+                "analysis_failed",
+                "provider" to settings.aiProvider.name,
+                "byok" to settings.geminiApiKey.isNotBlank()
+            )
+            throw err
+        }
         analysisDao.insertOrUpdateAnalysis(analysis)
         pinDao.updatePin(populated.pin.copy(isAnalyzedPhase2 = true))
+        val elapsedSec = (System.currentTimeMillis() - analysisStartedAt) / 1000L
+        AnalyticsClient.track(
+            "analysis_completed",
+            "provider" to settings.aiProvider.name,
+            "byok" to settings.geminiApiKey.isNotBlank(),
+            "duration_bucket" to when {
+                elapsedSec < 15 -> "lt_15s"
+                elapsedSec < 60 -> "15_60s"
+                else -> "gt_60s"
+            }
+        )
         return analysis
     }
 
@@ -493,6 +527,15 @@ class PinRepository(
             completedAt = System.currentTimeMillis()
         )
         importDao.updateBatch(finishedBatch)
+        AnalyticsClient.track(
+            "import_completed",
+            "file_kind" to if (fileName.contains("saved", ignoreCase = true)) "saved_posts" else "liked_posts",
+            "discovered" to parsedItems.size,
+            "imported" to newlyImported,
+            "duplicates" to duplicatesSkipped,
+            "ai_categorized" to aiCategorizedCount,
+            "enrich_online" to enrichOnlineMetadata
+        )
         return finishedBatch
     }
 

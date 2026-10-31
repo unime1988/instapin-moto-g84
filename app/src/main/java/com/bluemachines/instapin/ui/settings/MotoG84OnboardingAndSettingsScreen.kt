@@ -103,7 +103,8 @@ fun MotoG84OnboardingAndSettingsScreen(
     onSaveVisualAppearance: (AppThemePreset, FeedLayoutMode, FontScalePreset) -> Unit = { _, _, _ -> },
     onExportBackup: ((String) -> Unit) -> Unit = {},
     onRestoreBackup: ((String) -> Unit) -> Unit = {},
-    onSaveOverlayPrefs: (Boolean, ReelLinkCaptureMode, Boolean) -> Unit
+    onSaveOverlayPrefs: (Boolean, ReelLinkCaptureMode, Boolean) -> Unit,
+    onToggleAnalytics: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -1225,6 +1226,23 @@ fun MotoG84OnboardingAndSettingsScreen(
                     onCheckedChange = {
                         onSaveOverlayPrefs(settings.autoShowBubbleOnInstagramOnly, settings.reelLinkCaptureMode, it)
                     }
+                )
+            }
+        }
+
+        // Anonymous usage analytics opt-out — events carry only counts/enums/booleans
+        // under a random per-install ID; never URLs, captions, notes, names, or search text.
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp)
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                SettingToggleRow(
+                    title = "Share Anonymous Usage Stats",
+                    subtitle = "Helps improve InstaPin. Only action counts are sent — never your links, captions, notes, board names, or searches. No account, no ads.",
+                    checked = settings.analyticsEnabled,
+                    onCheckedChange = onToggleAnalytics
                 )
             }
         }

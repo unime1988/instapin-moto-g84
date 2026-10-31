@@ -4,6 +4,7 @@ interface Env {
   INSTAGRAM_VERIFY_TOKEN: string;
   META_APP_SECRET?: string;
   INSTAGRAM_ACCESS_TOKEN?: string;
+  ANALYTICS_ADMIN_KEY?: string;
 }
 
 type MessagingEvent = {
@@ -280,9 +281,120 @@ async function handleApi(request: Request, url: URL, env: Env): Promise<Response
   return null;
 }
 
+const ANALYTICS_INGEST_KEY = "instapin-analytics-v1";
+const EVENT_NAME_RE = /^[a-z0-9_]{1,40}$/;
+const PROP_KEY_RE = /^[a-z0-9_]{1,30}$/;
+
+function sanitizeAnalyticsProps(raw: unknown): Record<string, string | number | boolean> {
+  const clean: Record<string, string | number | boolean> = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (Object.keys(clean).length >= 15) break;
+      if (!PROP_KEY_RE.test(key)) continue;
+      if (typeof value === "boolean" || typeof value === "number") clean[key] = value;
+      else if (typeof value === "string" && value.length > 0) clean[key] = value.slice(0, 200);
+    }
+  }
+  return clean;
+}
+
+async function handleAnalyticsIngest(request: Request, env: Env): Promise<Response> {
+  if (request.headers.get("X-Analytics-Key") !== ANALYTICS_INGEST_KEY) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  const body = await request.json<{
+    install_id?: string;
+    app_version?: string;
+    os_api?: number;
+    events?: Array<{ e?: string; t?: number; p?: unknown }>;
+  }>().catch(() => null);
+  const installId = typeof body?.install_id === "string" ? body.install_id.slice(0, 64) : "";
+  const appVersion = typeof body?.app_version === "string" ? body.app_version.slice(0, 32) : "";
+  const events = Array.isArray(body?.events) ? body!.events!.slice(0, 50) : [];
+  if (!installId || events.length === 0) return jsonResponse({ accepted: 0 });
+
+  const receivedAt = Date.now();
+  const statements = events
+    .filter(e => typeof e?.e === "string" && EVENT_NAME_RE.test(e.e))
+    .map(e => env.INBOX_DB.prepare(
+      "INSERT INTO analytics_events(install_id, event, props, app_version, client_ts, received_at) VALUES(?, ?, ?, ?, ?, ?)"
+    ).bind(
+      installId,
+      e.e!,
+      JSON.stringify(sanitizeAnalyticsProps(e.p)),
+      appVersion,
+      typeof e.t === "number" ? e.t : receivedAt,
+      receivedAt
+    ));
+  if (statements.length === 0) return jsonResponse({ accepted: 0 });
+  await env.INBOX_DB.batch(statements);
+  return jsonResponse({ accepted: statements.length });
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+}
+
+async function handleAnalyticsDashboard(url: URL, env: Env): Promise<Response> {
+  // If ANALYTICS_ADMIN_KEY is configured, require ?key= match. Without it the page still
+  // only exposes anonymous aggregates (counts, enums) — no user content exists to leak.
+  if (env.ANALYTICS_ADMIN_KEY) {
+    const provided = url.searchParams.get("key") ?? "";
+    if (!equal(provided, env.ANALYTICS_ADMIN_KEY)) return new Response("Forbidden", { status: 403 });
+  }
+
+  const since30d = Date.now() - 30 * 86400_000;
+  const [totals, byEvent, byDay, installs, sources, osVersions] = await Promise.all([
+    env.INBOX_DB.prepare("SELECT COUNT(*) AS c FROM analytics_events WHERE received_at > ?").bind(since30d).first<{ c: number }>(),
+    env.INBOX_DB.prepare("SELECT event, COUNT(*) AS c FROM analytics_events WHERE received_at > ? GROUP BY event ORDER BY c DESC LIMIT 30").bind(since30d).all(),
+    env.INBOX_DB.prepare("SELECT date(received_at/1000,'unixepoch') AS d, COUNT(*) AS c, COUNT(DISTINCT install_id) AS u FROM analytics_events WHERE received_at > ? GROUP BY d ORDER BY d DESC LIMIT 14").bind(since30d - 16 * 86400_000).all(),
+    env.INBOX_DB.prepare("SELECT COUNT(DISTINCT install_id) AS u FROM analytics_events WHERE received_at > ?").bind(since30d).first<{ u: number }>(),
+    env.INBOX_DB.prepare("SELECT json_extract(props,'$.capture_source') AS s, COUNT(*) AS c FROM analytics_events WHERE event='pin_saved' AND received_at > ? GROUP BY s ORDER BY c DESC").bind(since30d).all(),
+    env.INBOX_DB.prepare("SELECT app_version AS v, COUNT(DISTINCT install_id) AS u FROM analytics_events WHERE received_at > ? GROUP BY v ORDER BY u DESC LIMIT 10").bind(since30d).all()
+  ]);
+
+  const eventCounts = new Map<string, number>((byEvent.results as any[]).map(r => [r.event, r.c]));
+  const funnelSteps = ["quick_save_opened", "pin_saved", "pin_opened", "analysis_completed"];
+  const first = eventCounts.get("quick_save_opened") ?? 0;
+
+  const row = (cells: string[]) => `<tr>${cells.map(c => `<td>${c}</td>`).join("")}</tr>`;
+  const eventRows = (byEvent.results as any[]).map(r => row([escapeHtml(String(r.event)), String(r.c)])).join("");
+  const dayRows = (byDay.results as any[]).map(r => row([String(r.d), String(r.u), String(r.c)])).join("");
+  const sourceRows = (sources.results as any[]).map(r => row([escapeHtml(String(r.s ?? "(none)")), String(r.c)])).join("");
+  const versionRows = (osVersions.results as any[]).map(r => row([escapeHtml(String(r.v || "unknown")), String(r.u)])).join("");
+  const funnelRows = funnelSteps.map(step => {
+    const c = eventCounts.get(step) ?? 0;
+    const pct = first > 0 ? ` (${Math.round((c / first) * 100)}%)` : "";
+    return row([step, `${c}${pct}`]);
+  }).join("");
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>InstaPin Analytics</title>
+<style>body{max-width:880px;margin:32px auto;padding:0 18px;font:15px/1.55 system-ui;color:#172033}h1{font-size:22px}h2{font-size:16px;margin-top:32px}table{border-collapse:collapse;width:100%}td{border-bottom:1px solid #e5e7eb;padding:6px 8px;text-align:left}td:last-child{text-align:right;font-variant-numeric:tabular-nums}.cards{display:flex;gap:14px;flex-wrap:wrap}.card{border:1px solid #e5e7eb;border-radius:10px;padding:14px 18px;min-width:150px}.num{font-size:26px;font-weight:700}.lbl{font-size:12px;color:#6b7280}</style></head><body>
+<h1>InstaPin — Anonymous Usage (last 30 days)</h1>
+<div class="cards">
+<div class="card"><div class="num">${installs?.u ?? 0}</div><div class="lbl">Unique installs</div></div>
+<div class="card"><div class="num">${totals?.c ?? 0}</div><div class="lbl">Total events</div></div>
+</div>
+<h2>Funnel (share of quick-save opens)</h2><table>${funnelRows}</table>
+<h2>Events</h2><table><tr><td><b>event</b></td><td style="text-align:right"><b>count</b></td></tr>${eventRows}</table>
+<h2>Saves by capture source</h2><table>${sourceRows}</table>
+<h2>Active installs by app version</h2><table>${versionRows}</table>
+<h2>Last 14 days</h2><table><tr><td><b>day</b></td><td><b>installs</b></td><td style="text-align:right"><b>events</b></td></tr>${dayRows}</table>
+</body></html>`;
+  return new Response(html, { headers: { "Content-Type": "text/html; charset=UTF-8" } });
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    if (request.method === "POST" && url.pathname === "/analytics") {
+      return await handleAnalyticsIngest(request, env);
+    }
+
+    if (request.method === "GET" && url.pathname === "/analytics/dashboard") {
+      return await handleAnalyticsDashboard(url, env);
+    }
 
     if (url.pathname.startsWith("/v1/")) {
       return await handleApi(request, url, env) ?? new Response("Not Found", { status: 404 });

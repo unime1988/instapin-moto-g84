@@ -40,7 +40,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '8.13'
 
       - name: Run Unit Tests
         run: gradle testDebugUnitTest
@@ -50,17 +50,29 @@ jobs:
           gradle assembleDebug
           cp app/build/outputs/apk/debug/app-debug.apk InstaPin-MotoG84.apk
 
+      - name: Assemble Play Store Release AAB
+        run: |
+          if [ -f app/keystore/instapin-upload.keystore ]; then
+            PLAY_VERSION_CODE=$((1000 + ${{ github.run_number }})) PLAY_APPLICATION_ID=com.instapin.app gradle bundleRelease
+            cp app/build/outputs/bundle/release/app-release.aab InstaPin-MotoG84-release.aab
+          else
+            echo "Upload keystore not in repo — skipping Play AAB (build it locally instead)"
+          fi
+
       - name: Generate Release Changelog Notes
         run: |
           echo "### What's New in v1.0.${{ github.run_number }}" > RELEASE_CHANGELOG.md
           git log -n 4 --pretty=format:"• %s" >> RELEASE_CHANGELOG.md
           echo "" >> RELEASE_CHANGELOG.md
 
-      - name: Upload InstaPin APK Artifact
+      - name: Upload InstaPin APK & Play AAB Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: InstaPin-MotoG84-debug-apk
-          path: InstaPin-MotoG84.apk
+          name: InstaPin-MotoG84-build
+          path: |
+            InstaPin-MotoG84.apk
+            InstaPin-MotoG84-release.aab
+          if-no-files-found: ignore
 
       - name: Publish Latest APK & Changelog to GitHub Releases
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
@@ -69,5 +81,7 @@ jobs:
           tag_name: v1.0.${{ github.run_number }}
           name: InstaPin v1.0.${{ github.run_number }} (Moto G84 5G)
           body_path: RELEASE_CHANGELOG.md
-          files: InstaPin-MotoG84.apk
+          files: |
+            InstaPin-MotoG84.apk
+            InstaPin-MotoG84-release.aab
           prerelease: false

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.bluemachines.instapin.data.analytics.AnalyticsClient
 import com.bluemachines.instapin.data.local.AiProviderType
 import com.bluemachines.instapin.data.local.AppPreferences
 import com.bluemachines.instapin.data.local.AppThemePreset
@@ -155,34 +156,44 @@ class MainViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UserSettings())
 
     fun updateSearchQuery(query: String) {
+        if (query.isNotBlank() && filterState.value.searchQuery.isBlank()) {
+            AnalyticsClient.track("search_used")
+        }
         filterState.value = filterState.value.copy(searchQuery = query)
     }
 
     fun selectBoardFilter(boardId: Long?) {
+        AnalyticsClient.track("filter_used", "type" to "board", "cleared" to (boardId == null))
         filterState.value = filterState.value.copy(selectedBoardId = boardId)
     }
 
     fun selectMoodFilter(moodId: Long?) {
+        AnalyticsClient.track("filter_used", "type" to "mood", "cleared" to (moodId == null))
         filterState.value = filterState.value.copy(selectedMoodId = moodId)
     }
 
     fun selectDomainFilter(domain: String?) {
+        AnalyticsClient.track("filter_used", "type" to "domain", "cleared" to (domain == null))
         filterState.value = filterState.value.copy(selectedDomain = domain)
     }
 
     fun selectAuthorFilter(author: String?) {
+        AnalyticsClient.track("filter_used", "type" to "author", "cleared" to (author == null))
         filterState.value = filterState.value.copy(selectedAuthor = author)
     }
 
     fun selectDateRange(range: DateFilterRange) {
+        AnalyticsClient.track("filter_used", "type" to "date", "range" to range.name)
         filterState.value = filterState.value.copy(dateRange = range)
     }
 
     fun toggleOnlyAnalyzed(onlyAnalyzed: Boolean) {
+        AnalyticsClient.track("filter_used", "type" to "analyzed", "enabled" to onlyAnalyzed)
         filterState.value = filterState.value.copy(onlyPhase2Analyzed = onlyAnalyzed)
     }
 
     fun clearAllFilters() {
+        AnalyticsClient.track("filters_cleared")
         filterState.value = PinFilterState()
     }
 
@@ -218,57 +229,71 @@ class MainViewModel(
         autoAnalyzePhase2: Boolean
     ) {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track(
+                "board_created",
+                "pinned_to_radial" to pinToRadial,
+                "auto_analyze" to autoAnalyzePhase2
+            )
             repository.createBoard(name, emoji, colorHex, description, pinToRadial, autoAnalyzePhase2)
         }
     }
 
     suspend fun createQuickSaveBoard(name: String): Long {
+        AnalyticsClient.track("board_created", "context" to "quick_save")
         return repository.createQuickSaveBoard(name)
     }
 
     fun updateBoard(board: Board) {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track("board_updated")
             repository.updateBoard(board)
         }
     }
 
     fun setBoardQuickSaveVisibility(boardId: Long, visibleInSaveSheet: Boolean) {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track("board_radial_toggled", "visible" to visibleInSaveSheet)
             repository.setBoardQuickSaveVisibility(boardId, visibleInSaveSheet)
         }
     }
 
     fun createBoardSection(boardId: Long, name: String, emoji: String = "📂") {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track("section_created")
             repository.createBoardSection(boardId, name, emoji)
         }
     }
 
     fun copyPinToBoard(pinId: Long, targetBoardId: Long, targetSectionId: Long? = null) {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track("pin_added_to_board")
             repository.copyPinToBoard(pinId, targetBoardId, targetSectionId)
         }
     }
 
     fun movePinToBoard(pinId: Long, sourceBoardId: Long?, targetBoardId: Long, targetSectionId: Long? = null) {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track("pin_moved")
             repository.movePinToBoard(pinId, sourceBoardId, targetBoardId, targetSectionId)
         }
     }
 
     fun assignPinToSection(pinId: Long, boardId: Long, sectionId: Long?) {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track("pin_assigned_section", "to_section" to (sectionId != null))
             repository.assignPinToSection(pinId, boardId, sectionId)
         }
     }
 
     fun createMood(name: String, emoji: String, colorHex: String) {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track("mood_created")
             repository.createMoodTag(name, emoji, colorHex)
         }
     }
 
     fun triggerPhase2Analysis(pinId: Long) {
+        AnalyticsClient.track("analysis_requested", "source" to "manual_button")
         viewModelScope.launch(Dispatchers.IO) {
             repository.runPhase2DeepAnalysis(pinId)
         }
@@ -283,12 +308,18 @@ class MainViewModel(
         notes: String
     ) {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track(
+                "pin_recategorized",
+                "boards_count" to boardIds.size,
+                "moods_count" to moodIds.size
+            )
             repository.updatePinBoardsAndMoods(pinId, boardIds, moodIds, domain, subject, notes)
         }
     }
 
     fun deletePin(pin: VideoPin) {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track("pin_deleted", "was_analyzed" to pin.isAnalyzedPhase2)
             repository.deletePin(pin)
         }
     }
@@ -296,23 +327,27 @@ class MainViewModel(
     fun attachReelUrlToPin(pinId: Long, rawUrl: String, onResult: (Boolean) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             val ok = repository.updatePinExactReelUrl(pinId, rawUrl)
+            AnalyticsClient.track("link_attached", "success" to ok)
             onResult(ok)
         }
     }
 
     fun approveAllPhase3Triage() {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track("triage_approved", "bulk" to true)
             repository.approveAllPhase3TriagePins()
         }
     }
 
     fun approveSinglePhase3Pin(pinId: Long) {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track("triage_approved", "bulk" to false)
             repository.approvePhase3Pin(pinId)
         }
     }
 
     fun runDemoSampleImportPhase3() {
+        AnalyticsClient.track("demo_import_run")
         val sampleLikedJson = """
             {
               "likes_media_likes": [
@@ -371,6 +406,7 @@ class MainViewModel(
 
     fun saveGeminiApiKey(apiKey: String) {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track("settings_saved", "section" to "ai", "has_key" to apiKey.isNotBlank())
             preferences.updateGeminiApiKey(apiKey)
         }
     }
@@ -384,6 +420,12 @@ class MainViewModel(
         creatorNiche: String
     ) {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track(
+                "settings_saved",
+                "section" to "ai",
+                "provider" to provider.name,
+                "has_key" to apiKey.isNotBlank()
+            )
             preferences.updateAiConfiguration(
                 provider = provider,
                 apiKey = apiKey,
@@ -412,7 +454,13 @@ class MainViewModel(
                 scriptTone = scriptTone,
                 creatorNiche = creatorNiche
             )
-            _aiTestStatus.value = repository.testActiveAiConnection()
+            val result = repository.testActiveAiConnection()
+            _aiTestStatus.value = result
+            AnalyticsClient.track(
+                "ai_connection_test",
+                "provider" to provider.name,
+                "success" to result.isSuccess
+            )
         }
     }
 
@@ -422,6 +470,13 @@ class MainViewModel(
         fontScale: FontScalePreset
     ) {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track(
+                "settings_saved",
+                "section" to "appearance",
+                "theme" to themePreset.name,
+                "layout" to layoutMode.name,
+                "font" to fontScale.name
+            )
             preferences.updateVisualAppearance(themePreset, layoutMode, fontScale)
         }
     }
@@ -430,8 +485,10 @@ class MainViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 val file = repository.exportFullBackupSnapshotToFile(context)
+                AnalyticsClient.track("backup_exported", "success" to true)
                 onComplete("Saved full JSON backup (${file.name})")
             }.onFailure { err ->
+                AnalyticsClient.track("backup_exported", "success" to false)
                 onComplete("Backup failed: ${err.message}")
             }
         }
@@ -441,14 +498,23 @@ class MainViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 val count = repository.restoreFullBackupSnapshotFromFile(context)
+                AnalyticsClient.track("backup_restored", "success" to true, "restored_count" to count)
                 onComplete("Restored $count Pins & Boards from backup!")
             }.onFailure { err ->
+                AnalyticsClient.track("backup_restored", "success" to false)
                 onComplete("Restore failed: ${err.message}")
             }
         }
     }
 
+    fun setAnalyticsEnabled(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.setEnabled(enabled)
+        }
+    }
+
     fun connectInstagramChatCapture() {
+        AnalyticsClient.track("dm_pairing_requested")
         viewModelScope.launch(Dispatchers.IO) {
             _instagramChatState.value = _instagramChatState.value.copy(
                 isLoading = true,
@@ -456,6 +522,7 @@ class MainViewModel(
             )
             runCatching { instagramChatService.createPairing() }
                 .onSuccess { pairing ->
+                    AnalyticsClient.track("dm_pairing_created")
                     preferences.saveInstagramChatPairing(
                         deviceToken = pairing.deviceToken,
                         pairingCode = pairing.pairingCode,
@@ -469,6 +536,7 @@ class MainViewModel(
                     )
                 }
                 .onFailure { error ->
+                    AnalyticsClient.track("dm_pairing_failed")
                     _instagramChatState.value = InstagramChatCaptureState(
                         statusMessage = "Could not create pairing code: ${error.message?.take(80) ?: "try again"}"
                     )
@@ -499,6 +567,11 @@ class MainViewModel(
                 }
                 pairing.paired to imported
             }.onSuccess { (paired, imported) ->
+                AnalyticsClient.track(
+                    "dm_sync_completed",
+                    "paired" to paired,
+                    "items" to imported
+                )
                 _instagramChatState.value = _instagramChatState.value.copy(
                     isLoading = false,
                     isConnected = paired,
@@ -516,6 +589,7 @@ class MainViewModel(
                     lastSyncedCount = imported
                 )
             }.onFailure { error ->
+                AnalyticsClient.track("dm_sync_failed")
                 _instagramChatState.value = _instagramChatState.value.copy(
                     isLoading = false,
                     statusMessage = "Sync unavailable: ${error.message?.take(80) ?: "try again"}"
@@ -526,6 +600,7 @@ class MainViewModel(
 
     fun disconnectInstagramChatCapture() {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track("dm_disconnected")
             val token = preferences.getSettings().instagramChatDeviceToken
             if (token.isNotBlank()) runCatching { instagramChatService.disconnect(token) }
             preferences.clearInstagramChatPairing()
@@ -539,12 +614,20 @@ class MainViewModel(
         autoAnalyzePhase2: Boolean
     ) {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track(
+                "settings_saved",
+                "section" to "overlay",
+                "capture_mode" to reelLinkCaptureMode.name,
+                "auto_analyze" to autoAnalyzePhase2,
+                "ig_only" to autoShowIgOnly
+            )
             preferences.updateOverlayPreferences(autoShowIgOnly, reelLinkCaptureMode, autoAnalyzePhase2)
         }
     }
 
     fun saveCreatorNiche(niche: String) {
         viewModelScope.launch(Dispatchers.IO) {
+            AnalyticsClient.track("settings_saved", "section" to "niche")
             preferences.updateCreatorNiche(niche)
         }
     }

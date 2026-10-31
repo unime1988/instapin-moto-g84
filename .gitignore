@@ -8,6 +8,7 @@ local.properties
 *.apk
 *.aab
 *.jks
+app/keystore/instapin-upload.keystore
 cloudflare/**/node_modules/
 cloudflare/**/.wrangler/
 cloudflare/**/.dev.vars
